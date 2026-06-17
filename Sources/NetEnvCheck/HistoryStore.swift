@@ -82,6 +82,17 @@ struct HistoryStore: Sendable {
         return history
     }
 
+    @discardableResult
+    func delete(id: UUID) -> [SavedReport] {
+        let history = load().filter { $0.id != id }
+        save(history)
+        return history
+    }
+
+    func clear() {
+        save([])
+    }
+
     func save(_ history: [SavedReport]) {
         do {
             try FileManager.default.createDirectory(

@@ -2,6 +2,10 @@
 
 一个本地 macOS 原生网络环境风险检测小工具，用 SwiftUI + AppKit + WKWebView 编写。
 
+GitHub: https://github.com/xie8266509/NetEnvCheck
+
+下载最新版本: https://github.com/xie8266509/NetEnvCheck/releases/latest
+
 ## 当前能力
 
 - 出口公网 IP、IPv4、IPv6
@@ -14,9 +18,20 @@
 - 均衡、严格、宽松三种评分预设
 - 扣分明细、数据源状态、耗时、错误提示和可信度
 - 历史记录、前后对比、Markdown/JSON 导出
+- 历史记录搜索、单条删除、清空、评分趋势、Markdown/JSON/HTML 导出
 - 菜单栏常驻、风险变化通知、关于页和隐私说明
+- 设置页：评分预设、历史保留、通知、自动检测、数据源开关、IPinfo Token
 - Claude 风格温暖中性色 UI、imagegen 方向重设计 App 图标、release 打包、ad-hoc 签名、可选公证流程
 - 应用内自检脚本
+
+## 安装
+
+1. 打开 [Releases](https://github.com/xie8266509/NetEnvCheck/releases/latest)
+2. 下载 `NetEnvCheck.app.zip`
+3. 解压后将 `NetEnvCheck.app` 拖到 Applications
+4. 首次打开如果 macOS 提示未验证开发者，可在 Finder 中右键 App，选择“打开”
+
+当前发布包默认使用 ad-hoc 签名；正式 Developer ID 签名和公证需要 Apple Developer 账号。
 
 ## 运行
 
@@ -66,6 +81,20 @@ NOTARY_PROFILE="your-notary-profile" \
 Scripts/package-app.sh
 ```
 
+## GitHub Actions
+
+项目包含两个 workflow：
+
+- `CI`：push/PR 时执行 `swift build`、`Scripts/run-tests.sh` 和打包，并上传 App artifact
+- `Release`：推送 `v*` tag 时自动打包 `NetEnvCheck.app.zip` 并创建 GitHub Release
+
+发布新版本示例：
+
+```bash
+git tag v1.1.0
+git push origin v1.1.0
+```
+
 ## 数据源
 
 - ipify：出口公网 IP、IPv4、IPv6
@@ -104,3 +133,5 @@ IPINFO_TOKEN="your-token" swift run NetEnvCheck
 ```
 
 配置后，检测结果会额外出现 `IPinfo Core` 数据源，并补充地理、ASN、hosting、proxy、VPN、Tor、mobile 等网络标记。
+
+在 App 中也可以通过“设置”窗口保存 IPinfo Token。设置页保存时会优先写入 macOS Keychain。

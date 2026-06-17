@@ -66,6 +66,26 @@ enum SelfTestRunner {
         expect(loaded.first?.report.publicIP == "8.8.8.8", "history should preserve public IP")
         expect(loaded.first?.report.scoringPreset == .relaxed, "history should preserve preset")
 
+        if let id = loaded.first?.id {
+            let afterDelete = store.delete(id: id)
+            expect(afterDelete.isEmpty, "history delete should remove selected report")
+        }
+        store.clear()
+        expect(store.load().isEmpty, "history clear should remove all reports")
+
+        var settings = AppSettings()
+        settings.historyLimit = 1
+        settings.networkTimeoutSeconds = 99
+        settings.retryCount = 8
+        let normalized = settings.normalized
+        expect(normalized.historyLimit == 10, "settings should clamp history limit")
+        expect(normalized.networkTimeoutSeconds == 30, "settings should clamp timeout")
+        expect(normalized.retryCount == 3, "settings should clamp retry count")
+
+        let html = baseReport().htmlReport()
+        expect(html.contains("<!doctype html>"), "HTML report should render a document")
+        expect(html.contains("网络环境检测报告"), "HTML report should include report title")
+
         if failures.isEmpty {
             print("NetEnvCheck self-tests passed")
             return 0

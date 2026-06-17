@@ -26,6 +26,9 @@ struct ContentView: View {
                         },
                         exportJSONAction: {
                             appState.exportCurrentReport(as: .json)
+                        },
+                        exportHTMLAction: {
+                            appState.exportCurrentReport(as: .html)
                         }
                     )
 
@@ -42,7 +45,9 @@ struct ContentView: View {
                         report: appState.report,
                         comparison: appState.comparison,
                         history: appState.history,
-                        restoreAction: appState.restore
+                        restoreAction: appState.restore,
+                        deleteAction: appState.deleteHistoryItem,
+                        clearAction: appState.clearHistory
                     )
                 }
                 .frame(maxWidth: 1080)
@@ -51,6 +56,18 @@ struct ContentView: View {
                 .frame(maxWidth: .infinity)
             }
             .scrollIndicators(.hidden)
+            .overlay(alignment: .bottom) {
+                LinearGradient(
+                    colors: [
+                        AppTheme.background.opacity(0),
+                        AppTheme.background.opacity(0.88)
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+                .frame(height: 28)
+                .allowsHitTesting(false)
+            }
 
             WebRTCProbeView(refreshToken: appState.refreshToken) { payload in
                 appState.applyWebRTC(payload)
@@ -172,6 +189,7 @@ private struct AppHeader: View {
     var copyAction: () -> Void
     var exportMarkdownAction: () -> Void
     var exportJSONAction: () -> Void
+    var exportHTMLAction: () -> Void
 
     var body: some View {
         HStack(alignment: .center, spacing: 18) {
@@ -205,12 +223,13 @@ private struct AppHeader: View {
                 }
                 .buttonStyle(.bordered)
 
-                Menu {
-                    Button("Markdown", action: exportMarkdownAction)
-                    Button("JSON", action: exportJSONAction)
-                } label: {
-                    Label("导出", systemImage: "square.and.arrow.down")
-                }
+                    Menu {
+                        Button("Markdown", action: exportMarkdownAction)
+                        Button("JSON", action: exportJSONAction)
+                        Button("HTML", action: exportHTMLAction)
+                    } label: {
+                        Label("导出", systemImage: "square.and.arrow.down")
+                    }
                 .menuStyle(.button)
 
                 Button(action: refreshAction) {
@@ -230,7 +249,7 @@ private struct AppHeader: View {
     }
 }
 
-private struct AppMark: View {
+struct AppMark: View {
     var body: some View {
         Group {
             if let image = AppIconLoader.image() {
@@ -628,6 +647,8 @@ private struct DetailTabsView: View {
     var comparison: ReportComparison?
     var history: [SavedReport]
     var restoreAction: (SavedReport) -> Void
+    var deleteAction: (SavedReport) -> Void
+    var clearAction: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
@@ -656,7 +677,13 @@ private struct DetailTabsView: View {
             case .sources:
                 SourceDetailView(report: report)
             case .history:
-                HistoryDetailView(comparison: comparison, history: history, restoreAction: restoreAction)
+                HistoryDetailView(
+                    comparison: comparison,
+                    history: history,
+                    restoreAction: restoreAction,
+                    deleteAction: deleteAction,
+                    clearAction: clearAction
+                )
             }
         }
         .padding(22)
@@ -714,6 +741,18 @@ private struct RiskDetailView: View {
                 }
             }
 
+            if !report.remediationTips.isEmpty {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("修复建议")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(.secondary)
+
+                    ForEach(report.remediationTips, id: \.self) { tip in
+                        FindingInlineRow(text: tip, symbol: "wrench.and.screwdriver", color: AppTheme.moss)
+                    }
+                }
+            }
+
             if !report.errors.isEmpty {
                 VStack(alignment: .leading, spacing: 10) {
                     Text("接口提示")
@@ -741,7 +780,7 @@ private struct SourceDetailView: View {
                     DetailRow(
                         label: status.source,
                         value: status.errorMessage.map { "\(status.statusText) · \($0)" } ?? status.statusText,
-                        state: status.state == .success ? .neutral : .warning
+                        state: status.state == .failure ? .warning : .neutral
                     )
                 }
             }
@@ -753,9 +792,32 @@ private struct HistoryDetailView: View {
     var comparison: ReportComparison?
     var history: [SavedReport]
     var restoreAction: (SavedReport) -> Void
+    var deleteAction: (SavedReport) -> Void
+    var clearAction: () -> Void
+    @State private var query = ""
+
+    private var filteredHistory: [SavedReport] {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return history }
+
+        return history.filter { item in
+            [
+                item.report.publicIP,
+                item.report.locationDisplay,
+                item.report.asnDisplay,
+                item.report.riskBand.title
+            ]
+            .compactMap { $0 }
+            .contains { $0.localizedCaseInsensitiveContains(trimmed) }
+        }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
+            if history.count >= 2 {
+                ScoreTrendView(history: history)
+            }
+
             if let comparison, !comparison.changes.isEmpty {
                 VStack(alignment: .leading, spacing: 10) {
                     Text("本次变化")
@@ -781,24 +843,105 @@ private struct HistoryDetailView: View {
                     Text("\(history.count) 条")
                         .font(.system(size: 12, weight: .medium))
                         .foregroundStyle(.secondary)
+
+                    Button("清空", role: .destructive, action: clearAction)
+                        .font(.system(size: 12))
                 }
+
+                TextField("搜索 IP、归属地、ASN 或风险等级", text: $query)
+                    .textFieldStyle(.roundedBorder)
 
                 if history.isEmpty {
                     Text("完成一次检测后会自动保存")
                         .font(.system(size: 13))
                         .foregroundStyle(.secondary)
+                } else if filteredHistory.isEmpty {
+                    Text("没有匹配的历史记录")
+                        .font(.system(size: 13))
+                        .foregroundStyle(.secondary)
                 } else {
                     VStack(spacing: 0) {
-                        ForEach(Array(history.prefix(8))) { item in
-                            Button {
-                                restoreAction(item)
-                            } label: {
-                                HistoryRow(item: item)
+                        ForEach(Array(filteredHistory.prefix(20))) { item in
+                            HStack(spacing: 10) {
+                                Button {
+                                    restoreAction(item)
+                                } label: {
+                                    HistoryRow(item: item)
+                                }
+                                .buttonStyle(.plain)
+
+                                Button(role: .destructive) {
+                                    deleteAction(item)
+                                } label: {
+                                    Image(systemName: "trash")
+                                }
+                                .buttonStyle(.borderless)
+                                .help("删除这条记录")
                             }
-                            .buttonStyle(.plain)
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+private struct ScoreTrendView: View {
+    var history: [SavedReport]
+
+    private var points: [SavedReport] {
+        Array(history.prefix(24).reversed())
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("评分趋势")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(.secondary)
+
+            GeometryReader { proxy in
+                let size = proxy.size
+                let values = points.map { CGFloat($0.report.riskScore) }
+                let step = values.count > 1 ? size.width / CGFloat(values.count - 1) : 0
+                let path = trendPath(values: values, size: size, step: step)
+
+                ZStack(alignment: .bottomLeading) {
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(AppTheme.elevated.opacity(0.72))
+
+                    Path { path in
+                        for index in 0...4 {
+                            let y = size.height * CGFloat(index) / 4
+                            path.move(to: CGPoint(x: 0, y: y))
+                            path.addLine(to: CGPoint(x: size.width, y: y))
+                        }
+                    }
+                    .stroke(AppTheme.line.opacity(0.35), lineWidth: 1)
+
+                    path
+                        .stroke(AppTheme.clay, style: StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round))
+
+                    ForEach(Array(values.enumerated()), id: \.offset) { index, value in
+                        Circle()
+                            .fill(value >= 85 ? AppTheme.moss : (value >= 60 ? AppTheme.amber : AppTheme.clay))
+                            .frame(width: 6, height: 6)
+                            .position(x: CGFloat(index) * step, y: size.height - (value / 100 * size.height))
+                    }
+                }
+            }
+            .frame(height: 120)
+        }
+    }
+
+    private func trendPath(values: [CGFloat], size: CGSize, step: CGFloat) -> Path {
+        Path { path in
+            guard let first = values.first else { return }
+            path.move(to: CGPoint(x: 0, y: size.height - (first / 100 * size.height)))
+
+            for item in values.dropFirst().enumerated() {
+                let x = CGFloat(item.offset + 1) * step
+                let y = size.height - (item.element / 100 * size.height)
+                path.addLine(to: CGPoint(x: x, y: y))
             }
         }
     }

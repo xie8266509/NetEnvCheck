@@ -1,0 +1,29 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build
+        run: swift build
+
+      - name: Self test
+        run: Scripts/run-tests.sh
+
+      - name: Package app
+        run: Scripts/package-app.sh
+
+      - name: Upload app artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: NetEnvCheck-app
+          path: dist/NetEnvCheck.app

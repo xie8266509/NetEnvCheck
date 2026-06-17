@@ -163,6 +163,7 @@ enum SourceState: String, Codable, Sendable {
     case success
     case warning
     case failure
+    case disabled
 }
 
 struct SourceStatus: Identifiable, Codable, Hashable, Sendable {
@@ -181,6 +182,8 @@ struct SourceStatus: Identifiable, Codable, Hashable, Sendable {
             "提示 · \(durationMS) ms"
         case .failure:
             "失败 · \(durationMS) ms"
+        case .disabled:
+            "已关闭"
         }
     }
 }
@@ -765,6 +768,44 @@ struct CheckReport: Codable, Sendable {
         return issues
     }
 
+    var remediationTips: [String] {
+        var tips: [String] = []
+
+        if security.isDatacenter == true {
+            tips.append("如果目标服务更偏好住宅网络，可尝试更换为住宅或移动出口。")
+        }
+
+        if security.isProxy == true || security.isVPN == true || security.isTor == true {
+            tips.append("代理/VPN/Tor 被公开情报源命中时，建议更换节点或降低代理特征。")
+        }
+
+        if !mismatchedWebRTCIPs.isEmpty {
+            tips.append("浏览器 WebRTC 暴露了不同公网 IP，可在浏览器或代理工具中关闭 WebRTC 直连泄露。")
+        }
+
+        if ipv6LeakSignal {
+            tips.append("确认代理工具是否接管 IPv6；不需要 IPv6 时可临时关闭系统 IPv6。")
+        }
+
+        if dnsLeakSignal {
+            tips.append("DNS 使用公共解析器时，建议让 DNS 与代理出口保持一致，或使用代理工具提供的 DNS。")
+        }
+
+        if timezoneMismatch || browserTimezoneMismatch {
+            tips.append("将系统/浏览器时区调整为与出口 IP 归属地一致。")
+        }
+
+        if languageMismatch || browserLanguageMismatch || httpLanguageMismatch {
+            tips.append("将系统语言、浏览器语言和 Accept-Language 调整为与出口地区一致。")
+        }
+
+        if countryConflict {
+            tips.append("多源归属地冲突时，建议等待 IP 情报库更新，或更换归属更稳定的出口。")
+        }
+
+        return Self.unique(tips)
+    }
+
     func plainTextReport() -> String {
         let formatter = DateFormatter()
         formatter.dateStyle = .medium
@@ -799,6 +840,9 @@ struct CheckReport: Codable, Sendable {
 
         异常发现：
         \(issueSummary.isEmpty ? "未发现明显异常" : issueSummary.map { "- \($0)" }.joined(separator: "\n"))
+
+        修复建议：
+        \(remediationTips.isEmpty ? "暂无建议" : remediationTips.map { "- \($0)" }.joined(separator: "\n"))
 
         数据源状态：
         \(sourceStatuses.isEmpty ? "无数据源状态" : sourceStatuses.map { "- \($0.source)：\($0.statusText)\($0.errorMessage.map { "，\($0)" } ?? "")" }.joined(separator: "\n"))
@@ -843,11 +887,92 @@ struct CheckReport: Codable, Sendable {
 
         \(issueSummary.isEmpty ? "未发现明显异常" : issueSummary.map { "- \($0)" }.joined(separator: "\n"))
 
+        ## 修复建议
+
+        \(remediationTips.isEmpty ? "暂无建议" : remediationTips.map { "- \($0)" }.joined(separator: "\n"))
+
         ## 数据源状态
 
         \(sourceStatuses.isEmpty ? "无数据源状态" : sourceStatuses.map { "- \($0.source)：\($0.statusText)\($0.errorMessage.map { "；\($0)" } ?? "")" }.joined(separator: "\n"))
 
         > 检测结果仅供参考，不保证与 Claude 官方判定一致。
+        """
+    }
+
+    func htmlReport() -> String {
+        let rows: [(String, String)] = [
+            ("出口 IP", publicIP ?? "--"),
+            ("IP 协议", ipVersionDisplay),
+            ("归属地", locationDisplay),
+            ("ASN", asnDisplay),
+            ("IP 类型", ipTypeDisplay),
+            ("代理识别", security.proxyText),
+            ("DNS", dns.displayText),
+            ("WebRTC", webRTCDisplay),
+            ("系统时区", timezoneDisplay),
+            ("浏览器时区", browserTimezoneDisplay),
+            ("系统语言", languageDisplay),
+            ("浏览器语言", browserLanguageDisplay),
+            ("HTTP 头", httpHeaderDisplay)
+        ]
+
+        let issueHTML = issueSummary.isEmpty
+            ? "<li>未发现明显异常</li>"
+            : issueSummary.map { "<li>\(Self.escapeHTML($0))</li>" }.joined()
+
+        let scoreHTML = scoreBreakdown.isEmpty
+            ? "<li>无扣分项</li>"
+            : scoreBreakdown.map { "<li><strong>\(Self.escapeHTML($0.title))</strong>：\($0.points)；\(Self.escapeHTML($0.detail))</li>" }.joined()
+
+        let sourceHTML = sourceStatuses.isEmpty
+            ? "<li>无数据源状态</li>"
+            : sourceStatuses.map { status in
+                "<li><strong>\(Self.escapeHTML(status.source))</strong>：\(Self.escapeHTML(status.statusText))\(status.errorMessage.map { "；\(Self.escapeHTML($0))" } ?? "")</li>"
+            }.joined()
+
+        let tipsHTML = remediationTips.isEmpty
+            ? "<li>暂无建议</li>"
+            : remediationTips.map { "<li>\(Self.escapeHTML($0))</li>" }.joined()
+
+        return """
+        <!doctype html>
+        <html lang="zh-CN">
+        <head>
+          <meta charset="utf-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1">
+          <title>NetEnvCheck Report</title>
+          <style>
+            body { font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif; margin: 32px; color: #28231f; background: #fbf7f1; }
+            main { max-width: 860px; margin: auto; background: white; border: 1px solid #eadfd2; border-radius: 12px; padding: 28px; }
+            h1 { margin: 0 0 8px; }
+            .score { font-size: 42px; font-weight: 700; color: #af4a34; margin: 18px 0; }
+            .meta { color: #746b63; }
+            table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+            th, td { border-bottom: 1px solid #eee4da; padding: 10px 0; text-align: left; vertical-align: top; }
+            th { width: 120px; color: #8a8178; }
+            section { margin-top: 24px; }
+            li { margin: 7px 0; }
+          </style>
+        </head>
+        <body>
+        <main>
+          <h1>网络环境检测报告</h1>
+          <div class="meta">\(Self.escapeHTML(DateFormatter.reportFormatter.string(from: generatedAt))) · \(Self.escapeHTML(scoringPreset.title)) · \(Self.escapeHTML(confidence.title))</div>
+          <div class="score">\(riskScore) / 100</div>
+          <p><strong>\(Self.escapeHTML(riskBand.title))</strong>：\(Self.escapeHTML(riskBand.message))</p>
+          <table>
+            <tbody>
+              \(rows.map { "<tr><th>\(Self.escapeHTML($0.0))</th><td>\(Self.escapeHTML($0.1))</td></tr>" }.joined(separator: "\n"))
+            </tbody>
+          </table>
+          <section><h2>扣分明细</h2><ul>\(scoreHTML)</ul></section>
+          <section><h2>异常发现</h2><ul>\(issueHTML)</ul></section>
+          <section><h2>修复建议</h2><ul>\(tipsHTML)</ul></section>
+          <section><h2>数据源状态</h2><ul>\(sourceHTML)</ul></section>
+          <p class="meta">检测结果仅供参考，不保证与 Claude 或任何服务的官方风控判定一致。</p>
+        </main>
+        </body>
+        </html>
         """
     }
 
@@ -867,6 +992,15 @@ struct CheckReport: Codable, Sendable {
             }
             return trimmed.uppercased()
         }
+    }
+
+    static func escapeHTML(_ value: String) -> String {
+        value
+            .replacingOccurrences(of: "&", with: "&amp;")
+            .replacingOccurrences(of: "<", with: "&lt;")
+            .replacingOccurrences(of: ">", with: "&gt;")
+            .replacingOccurrences(of: "\"", with: "&quot;")
+            .replacingOccurrences(of: "'", with: "&#39;")
     }
 }
 

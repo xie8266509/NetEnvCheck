@@ -20,7 +20,12 @@ struct NetEnvCheckApp: App {
                 .frame(minWidth: 820, minHeight: 820)
         }
         .commands {
-            CommandGroup(replacing: .newItem) {}
+            CommandGroup(replacing: .appSettings) {
+                Button("设置...") {
+                    SettingsWindowController.shared.show(appState: appState)
+                }
+                .keyboardShortcut(",", modifiers: .command)
+            }
         }
     }
 }
@@ -66,7 +71,9 @@ final class StatusBarController: NSObject {
         menu.addItem(NSMenuItem.separator())
         menu.addItem(NSMenuItem(title: "导出 Markdown", action: #selector(exportMarkdown), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "导出 JSON", action: #selector(exportJSON), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "导出 HTML", action: #selector(exportHTML), keyEquivalent: ""))
         menu.addItem(NSMenuItem.separator())
+        menu.addItem(NSMenuItem(title: "设置...", action: #selector(showSettings), keyEquivalent: ","))
         menu.addItem(NSMenuItem(title: "隐私说明", action: #selector(showPrivacy), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "关于 NetEnvCheck", action: #selector(showAbout), keyEquivalent: ""))
         menu.addItem(NSMenuItem.separator())
@@ -104,7 +111,11 @@ final class StatusBarController: NSObject {
 
     @objc private func openApp() {
         NSApp.activate(ignoringOtherApps: true)
-        NSApp.windows.first?.makeKeyAndOrderFront(nil)
+        if let window = NSApp.windows.first(where: { $0.title == "NetEnvCheck" || $0.contentViewController is NSHostingController<ContentView> }) {
+            window.makeKeyAndOrderFront(nil)
+        } else {
+            NSApp.sendAction(Selector(("newWindow:")), to: nil, from: nil)
+        }
     }
 
     @objc private func refresh() {
@@ -125,6 +136,14 @@ final class StatusBarController: NSObject {
         AppState.shared.exportCurrentReport(as: .json)
     }
 
+    @objc private func exportHTML() {
+        AppState.shared.exportCurrentReport(as: .html)
+    }
+
+    @objc private func showSettings() {
+        SettingsWindowController.shared.show(appState: AppState.shared)
+    }
+
     @objc private func showPrivacy() {
         let alert = NSAlert()
         alert.messageText = "隐私说明"
@@ -134,26 +153,6 @@ final class StatusBarController: NSObject {
     }
 
     @objc private func showAbout() {
-        NSApp.orderFrontStandardAboutPanel(options: [
-            .applicationName: "NetEnvCheck",
-            .applicationVersion: "1.0.0",
-            .credits: Self.aboutCredits()
-        ])
-    }
-
-    private static func aboutCredits() -> NSAttributedString {
-        let text = NSMutableAttributedString(
-            string: "本地网络环境风险检测工具。结果仅供参考，不保证与任何服务的官方风控判定一致。\n\n联系作者："
-        )
-        let linkText = NSAttributedString(
-            string: "https://t.me/xiemecoin",
-            attributes: [
-                .link: "https://t.me/xiemecoin",
-                .foregroundColor: NSColor.linkColor,
-                .underlineStyle: NSUnderlineStyle.single.rawValue
-            ]
-        )
-        text.append(linkText)
-        return text
+        AboutWindowController.shared.show()
     }
 }

@@ -1,54 +1,56 @@
 import Foundation
 
 struct ProbeService: Sendable {
-    func run(preset: RiskPreset = .balanced) async -> CheckReport {
+    func run(
+        preset: RiskPreset = .balanced,
+        settings: AppSettings = AppSettings(),
+        ipinfoToken: String = ""
+    ) async -> CheckReport {
         var report = CheckReport()
         report.scoringPreset = preset
 
-        async let ipifyDualResult = captureSource(
-            source: "ipify dual",
-            url: "https://api64.ipify.org?format=json"
-        ) {
-            try await fetchJSON(IpifyResponse.self, from: "https://api64.ipify.org?format=json")
-        }
+        async let ipifyDualResult = settings.isEnabled(.ipifyDual)
+            ? captureSource(source: "ipify dual", sourceID: .ipifyDual, url: "https://api64.ipify.org?format=json", settings: settings) {
+                try await fetchJSON(IpifyResponse.self, from: "https://api64.ipify.org?format=json", settings: settings)
+            }
+            : disabledSource(IpifyResponse.self, source: "ipify dual", sourceID: .ipifyDual, url: "https://api64.ipify.org?format=json")
 
-        async let ipifyIPv4Result = captureSource(
-            source: "ipify IPv4",
-            url: "https://api.ipify.org?format=json"
-        ) {
-            try await fetchJSON(IpifyResponse.self, from: "https://api.ipify.org?format=json")
-        }
+        async let ipifyIPv4Result = settings.isEnabled(.ipifyIPv4)
+            ? captureSource(source: "ipify IPv4", sourceID: .ipifyIPv4, url: "https://api.ipify.org?format=json", settings: settings) {
+                try await fetchJSON(IpifyResponse.self, from: "https://api.ipify.org?format=json", settings: settings)
+            }
+            : disabledSource(IpifyResponse.self, source: "ipify IPv4", sourceID: .ipifyIPv4, url: "https://api.ipify.org?format=json")
 
-        async let ipifyIPv6Result = captureSource(
-            source: "ipify IPv6",
-            url: "https://api6.ipify.org?format=json",
-            failureState: .warning
-        ) {
-            try await fetchJSON(IpifyResponse.self, from: "https://api6.ipify.org?format=json")
-        }
+        async let ipifyIPv6Result = settings.isEnabled(.ipifyIPv6)
+            ? captureSource(source: "ipify IPv6", sourceID: .ipifyIPv6, url: "https://api6.ipify.org?format=json", settings: settings, failureState: .warning) {
+                try await fetchJSON(IpifyResponse.self, from: "https://api6.ipify.org?format=json", settings: settings)
+            }
+            : disabledSource(IpifyResponse.self, source: "ipify IPv6", sourceID: .ipifyIPv6, url: "https://api6.ipify.org?format=json")
 
-        async let ipwhoResult = captureSource(
-            source: "ipwho.is",
-            url: "https://ipwho.is/"
-        ) {
-            try await fetchJSON(IPWhoResponse.self, from: "https://ipwho.is/")
-        }
+        async let ipwhoResult = settings.isEnabled(.ipwho)
+            ? captureSource(source: "ipwho.is", sourceID: .ipwho, url: "https://ipwho.is/", settings: settings) {
+                try await fetchJSON(IPWhoResponse.self, from: "https://ipwho.is/", settings: settings)
+            }
+            : disabledSource(IPWhoResponse.self, source: "ipwho.is", sourceID: .ipwho, url: "https://ipwho.is/")
 
-        async let ipapiIsResult = captureSource(
-            source: "ipapi.is",
-            url: "https://api.ipapi.is/"
-        ) {
-            try await fetchJSON(IPAPIISResponse.self, from: "https://api.ipapi.is/")
-        }
+        async let ipapiIsResult = settings.isEnabled(.ipapi)
+            ? captureSource(source: "ipapi.is", sourceID: .ipapi, url: "https://api.ipapi.is/", settings: settings) {
+                try await fetchJSON(IPAPIISResponse.self, from: "https://api.ipapi.is/", settings: settings)
+            }
+            : disabledSource(IPAPIISResponse.self, source: "ipapi.is", sourceID: .ipapi, url: "https://api.ipapi.is/")
 
-        async let ifconfigResult = captureSource(
-            source: "ifconfig.co",
-            url: "https://ifconfig.co/json"
-        ) {
-            try await fetchJSON(IfconfigResponse.self, from: "https://ifconfig.co/json")
-        }
+        async let ifconfigResult = settings.isEnabled(.ifconfig)
+            ? captureSource(source: "ifconfig.co", sourceID: .ifconfig, url: "https://ifconfig.co/json", settings: settings) {
+                try await fetchJSON(IfconfigResponse.self, from: "https://ifconfig.co/json", settings: settings)
+            }
+            : disabledSource(IfconfigResponse.self, source: "ifconfig.co", sourceID: .ifconfig, url: "https://ifconfig.co/json")
 
-        async let dnsResult = DNSResolverProbe().run()
+        async let dnsResult = settings.isEnabled(.dns)
+            ? DNSResolverProbe().run()
+            : DNSResolverProbeResult(
+                info: DNSResolverInfo(),
+                status: SourceStatus(source: "local DNS", url: "scutil --dns", state: .disabled, durationMS: 0, errorMessage: nil)
+            )
 
         let ipifyDual = await ipifyDualResult
         let ipifyIPv4 = await ipifyIPv4Result
@@ -72,7 +74,7 @@ struct ProbeService: Sendable {
         case let .success(response):
             report.publicIP = response.ip
         case let .failure(error):
-            report.errors.append("\(ipifyDual.status.source)：\(error.localizedDescription)")
+            appendError(error, from: ipifyDual.status, to: &report)
         }
 
         switch ipifyIPv4.result {
@@ -84,7 +86,7 @@ struct ProbeService: Sendable {
                 }
             }
         case let .failure(error):
-            report.errors.append("\(ipifyIPv4.status.source)：\(error.localizedDescription)")
+            appendError(error, from: ipifyIPv4.status, to: &report)
         }
 
         switch ipifyIPv6.result {
@@ -105,7 +107,7 @@ struct ProbeService: Sendable {
                 report.publicIP = response.ip
             }
         case let .failure(error):
-            report.errors.append("\(ipwho.status.source)：\(error.localizedDescription)")
+            appendError(error, from: ipwho.status, to: &report)
         }
 
         switch ipapiIs.result {
@@ -116,7 +118,7 @@ struct ProbeService: Sendable {
                 report.publicIP = response.ip
             }
         case let .failure(error):
-            report.errors.append("\(ipapiIs.status.source)：\(error.localizedDescription)")
+            appendError(error, from: ipapiIs.status, to: &report)
         }
 
         switch ifconfig.result {
@@ -126,7 +128,7 @@ struct ProbeService: Sendable {
                 report.publicIP = response.ip
             }
         case let .failure(error):
-            report.errors.append("\(ifconfig.status.source)：\(error.localizedDescription)")
+            appendError(error, from: ifconfig.status, to: &report)
         }
 
         report.dns = dns.info
@@ -134,13 +136,24 @@ struct ProbeService: Sendable {
             report.errors.append("DNS：\(error)")
         }
 
-        await applyCommercialIntel(to: &report)
+        await applyCommercialIntel(to: &report, settings: settings, token: ipinfoToken)
 
         return report
     }
 
-    private func applyCommercialIntel(to report: inout CheckReport) async {
-        guard let token = CommercialIntelConfig.load().ipinfoToken else {
+    private func applyCommercialIntel(to report: inout CheckReport, settings: AppSettings, token: String) async {
+        guard settings.isEnabled(.ipinfo) else {
+            report.sourceStatuses.append(
+                SourceStatus(source: "IPinfo Core", url: "https://api.ipinfo.io/lookup", state: .disabled, durationMS: 0, errorMessage: nil)
+            )
+            return
+        }
+
+        let token = token.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? CommercialIntelConfig.load().ipinfoToken
+            : token
+
+        guard let token, !token.isEmpty else {
             return
         }
 
@@ -151,10 +164,12 @@ struct ProbeService: Sendable {
 
         let ipinfo = await captureSource(
             source: "IPinfo Core",
+            sourceID: .ipinfo,
             url: url,
-            displayURL: displayURL
+            displayURL: displayURL,
+            settings: settings
         ) {
-            try await fetchJSON(IPInfoCoreResponse.self, from: url)
+            try await fetchJSON(IPInfoCoreResponse.self, from: url, settings: settings)
         }
 
         report.sourceStatuses.append(ipinfo.status)
@@ -167,21 +182,28 @@ struct ProbeService: Sendable {
                 report.publicIP = response.ip
             }
         case let .failure(error):
-            report.errors.append("\(ipinfo.status.source)：\(error.localizedDescription)")
+            appendError(error, from: ipinfo.status, to: &report)
         }
+    }
+
+    private func appendError(_ error: Error, from status: SourceStatus, to report: inout CheckReport) {
+        guard status.state != .disabled else { return }
+        report.errors.append("\(status.source)：\(error.localizedDescription)")
     }
 
     private func captureSource<T: Decodable & Sendable>(
         source: String,
+        sourceID: ProbeSourceID,
         url: String,
         displayURL: String? = nil,
+        settings: AppSettings,
         failureState: SourceState = .failure,
         _ operation: @Sendable @escaping () async throws -> T
     ) async -> ProbeSourceResult<T> {
         let startedAt = Date()
 
         do {
-            let value = try await operation()
+            let value = try await retry(settings.retryCount, operation)
             return ProbeSourceResult(
                 result: .success(value),
                 status: SourceStatus(
@@ -206,16 +228,21 @@ struct ProbeService: Sendable {
         }
     }
 
-    private func fetchJSON<T: Decodable>(
+    private func fetchJSON<T: Decodable & Sendable>(
         _ type: T.Type,
-        from urlString: String
+        from urlString: String,
+        settings: AppSettings
     ) async throws -> T {
         guard let url = URL(string: urlString) else {
             throw ProbeError.invalidURL(urlString)
         }
 
-        var request = URLRequest(url: url, timeoutInterval: 10)
-        request.setValue("NetEnvCheck/0.2 (+local macOS app)", forHTTPHeaderField: "User-Agent")
+        if settings.cacheTTLSeconds > 0, let cached = await ProbeResponseCache.shared.get(urlString, as: T.self, ttl: settings.cacheTTLSeconds) {
+            return cached
+        }
+
+        var request = URLRequest(url: url, timeoutInterval: TimeInterval(settings.networkTimeoutSeconds))
+        request.setValue("NetEnvCheck/1.1 (+local macOS app)", forHTTPHeaderField: "User-Agent")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
 
         let (data, response) = try await URLSession.shared.data(for: request)
@@ -229,7 +256,41 @@ struct ProbeService: Sendable {
             throw ProbeError.badStatus(httpResponse.statusCode, body)
         }
 
-        return try JSONDecoder().decode(type, from: data)
+        let decoded = try JSONDecoder().decode(type, from: data)
+        await ProbeResponseCache.shared.set(urlString, data: data)
+        return decoded
+    }
+
+    private func retry<T>(
+        _ count: Int,
+        _ operation: @Sendable @escaping () async throws -> T
+    ) async throws -> T {
+        var lastError: Error?
+
+        for attempt in 0...count {
+            do {
+                return try await operation()
+            } catch {
+                lastError = error
+                if attempt < count {
+                    try? await Task.sleep(nanoseconds: UInt64(250_000_000 * (attempt + 1)))
+                }
+            }
+        }
+
+        throw lastError ?? ProbeError.invalidResponse
+    }
+
+    private func disabledSource<T: Sendable>(
+        _ type: T.Type,
+        source: String,
+        sourceID: ProbeSourceID,
+        url: String
+    ) -> ProbeSourceResult<T> {
+        ProbeSourceResult(
+            result: .failure(ProbeError.sourceDisabled(sourceID.title)),
+            status: SourceStatus(source: source, url: url, state: .disabled, durationMS: 0, errorMessage: nil)
+        )
     }
 
     private static func durationMS(since startedAt: Date) -> Int {
@@ -240,6 +301,33 @@ struct ProbeService: Sendable {
 private struct ProbeSourceResult<T: Sendable>: Sendable {
     var result: Result<T, Error>
     var status: SourceStatus
+}
+
+private actor ProbeResponseCache {
+    static let shared = ProbeResponseCache()
+
+    private struct Entry {
+        var data: Data
+        var savedAt: Date
+    }
+
+    private var entries: [String: Entry] = [:]
+
+    func get<T: Decodable & Sendable>(_ key: String, as type: T.Type, ttl: Int) -> T? {
+        guard
+            let entry = entries[key],
+            Date().timeIntervalSince(entry.savedAt) <= TimeInterval(ttl)
+        else {
+            entries[key] = nil
+            return nil
+        }
+
+        return try? JSONDecoder().decode(type, from: entry.data)
+    }
+
+    func set(_ key: String, data: Data) {
+        entries[key] = Entry(data: data, savedAt: Date())
+    }
 }
 
 private struct DNSResolverProbe: Sendable {
@@ -368,6 +456,7 @@ enum ProbeError: LocalizedError {
     case invalidResponse
     case badStatus(Int, String)
     case commandFailed(String, String)
+    case sourceDisabled(String)
 
     var errorDescription: String? {
         switch self {
@@ -379,6 +468,8 @@ enum ProbeError: LocalizedError {
             body.isEmpty ? "HTTP \(status)" : "HTTP \(status)：\(body)"
         case let .commandFailed(command, message):
             "\(command) 失败：\(message)"
+        case let .sourceDisabled(source):
+            "\(source) 已关闭"
         }
     }
 }

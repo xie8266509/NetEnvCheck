@@ -6,6 +6,7 @@ import UserNotifications
 enum ReportExportFormat {
     case markdown
     case json
+    case html
 
     var title: String {
         switch self {
@@ -13,6 +14,8 @@ enum ReportExportFormat {
             "Markdown"
         case .json:
             "JSON"
+        case .html:
+            "HTML"
         }
     }
 
@@ -22,6 +25,8 @@ enum ReportExportFormat {
             "md"
         case .json:
             "json"
+        case .html:
+            "html"
         }
     }
 
@@ -31,6 +36,8 @@ enum ReportExportFormat {
             UTType(filenameExtension: "md") ?? .plainText
         case .json:
             .json
+        case .html:
+            .html
         }
     }
 }
@@ -47,6 +54,8 @@ final class AppState: ObservableObject {
     @Published var report = CheckReport()
     @Published var history: [SavedReport]
     @Published var comparison: ReportComparison?
+    @Published var settings: AppSettings
+    @Published var ipinfoToken: String
     @Published var isRefreshing = false
     @Published var webRTCPending = false
     @Published var refreshToken = UUID()
@@ -54,6 +63,10 @@ final class AppState: ObservableObject {
     @Published var selectedPreset: RiskPreset = .balanced {
         didSet {
             report.scoringPreset = selectedPreset
+            if settings.defaultPreset != selectedPreset {
+                settings.defaultPreset = selectedPreset
+                settingsStore.save(settings)
+            }
             updateComparisonAgainstLatest()
             postReportUpdate()
         }
@@ -61,16 +74,29 @@ final class AppState: ObservableObject {
 
     private let service = ProbeService()
     private let historyStore = HistoryStore()
+    private let settingsStore = SettingsStore()
     private var didStart = false
+    private var autoRefreshTask: Task<Void, Never>?
 
     private init() {
-        history = historyStore.load()
+        let loadedSettings = settingsStore.load()
+        settings = loadedSettings
+        ipinfoToken = KeychainStore.loadIPinfoToken()
+        selectedPreset = loadedSettings.defaultPreset
+        history = Array(historyStore.load().prefix(loadedSettings.historyLimit))
+    }
+
+    deinit {
+        autoRefreshTask?.cancel()
     }
 
     func startIfNeeded() {
         guard !didStart else { return }
         didStart = true
-        NotificationService.shared.requestAuthorization()
+        if settings.notificationsEnabled {
+            NotificationService.shared.requestAuthorization()
+        }
+        configureAutoRefresh()
 
         Task {
             await refresh()
@@ -83,10 +109,19 @@ final class AppState: ObservableObject {
         lastActionMessage = nil
         postRefreshStateUpdate()
 
-        var nextReport = await service.run(preset: selectedPreset)
-        nextReport.webRTCSupported = nil
-        nextReport.webRTCCandidates = []
-        nextReport.browser = BrowserEnvironment()
+        var nextReport = await service.run(preset: selectedPreset, settings: settings, ipinfoToken: ipinfoToken)
+
+        if settings.isEnabled(.webRTC) || settings.isEnabled(.httpHeaders) {
+            nextReport.webRTCSupported = nil
+            nextReport.webRTCCandidates = []
+            nextReport.browser = BrowserEnvironment()
+            webRTCPending = true
+        } else {
+            nextReport.webRTCSupported = false
+            nextReport.webRTCCandidates = []
+            nextReport.browser = BrowserEnvironment()
+            webRTCPending = false
+        }
 
         report = nextReport
         refreshToken = UUID()
@@ -97,9 +132,15 @@ final class AppState: ObservableObject {
     }
 
     func applyWebRTC(_ payload: WebRTCProbePayload) {
+        guard settings.isEnabled(.webRTC) || settings.isEnabled(.httpHeaders) else {
+            webRTCPending = false
+            persistCompletedReport()
+            return
+        }
+
         report.webRTCSupported = payload.supported
-        report.webRTCCandidates = payload.candidates
-        report.browser = payload.browser
+        report.webRTCCandidates = settings.isEnabled(.webRTC) ? payload.candidates : []
+        report.browser = settings.isEnabled(.httpHeaders) ? payload.browser : BrowserEnvironment()
 
         if let error = payload.error, !error.isEmpty {
             report.errors.append("WebRTC：\(error)")
@@ -142,6 +183,8 @@ final class AppState: ObservableObject {
                 encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
                 encoder.dateEncodingStrategy = .iso8601
                 data = try encoder.encode(report)
+            case .html:
+                data = Data(report.htmlReport().utf8)
             }
 
             try data.write(to: url, options: .atomic)
@@ -161,16 +204,52 @@ final class AppState: ObservableObject {
         postRefreshStateUpdate()
     }
 
+    func deleteHistoryItem(_ savedReport: SavedReport) {
+        history = historyStore.delete(id: savedReport.id)
+        updateComparisonAgainstLatest()
+    }
+
+    func clearHistory() {
+        historyStore.clear()
+        history = []
+        comparison = nil
+        lastActionMessage = "历史记录已清空"
+    }
+
+    func updateSettings(_ transform: (inout AppSettings) -> Void) {
+        var next = settings
+        transform(&next)
+        next = next.normalized
+        settings = next
+        selectedPreset = next.defaultPreset
+        settingsStore.save(next)
+        history = Array(history.prefix(next.historyLimit))
+
+        if next.notificationsEnabled {
+            NotificationService.shared.requestAuthorization()
+        }
+
+        configureAutoRefresh()
+    }
+
+    func updateIPinfoToken(_ token: String) {
+        ipinfoToken = token
+        KeychainStore.saveIPinfoToken(token)
+        lastActionMessage = token.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "IPinfo Token 已清空" : "IPinfo Token 已保存"
+    }
+
     private func persistCompletedReport() {
         let previous = history.first?.report
         let completed = report
 
         if let previous {
             comparison = ReportComparison(previous: previous, current: completed)
-            NotificationService.shared.notifyIfNeeded(previous: previous, current: completed)
+            if settings.notificationsEnabled {
+                NotificationService.shared.notifyIfNeeded(previous: previous, current: completed)
+            }
         }
 
-        history = historyStore.append(completed)
+        history = historyStore.append(completed, limit: settings.historyLimit)
     }
 
     private func updateComparisonAgainstLatest() {
@@ -194,6 +273,20 @@ final class AppState: ObservableObject {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyyMMdd-HHmmss"
         return formatter.string(from: Date())
+    }
+
+    private func configureAutoRefresh() {
+        autoRefreshTask?.cancel()
+        guard settings.autoRefreshEnabled else { return }
+
+        let interval = UInt64(settings.autoRefreshIntervalMinutes * 60) * 1_000_000_000
+        autoRefreshTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: interval)
+                guard !Task.isCancelled else { return }
+                await self?.refresh()
+            }
+        }
     }
 }
 
