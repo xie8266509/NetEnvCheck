@@ -36,6 +36,63 @@ struct SettingsView: View {
                     )
                 }
 
+                Section("更新") {
+                    Toggle("启动时自动检查更新（每日最多一次）", isOn: settingsBinding(\.automaticUpdateChecksEnabled))
+
+                    LabeledContent("当前版本") {
+                        Text(appState.currentVersionText)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    if let latestUpdate = appState.latestUpdate {
+                        LabeledContent("最新版本") {
+                            Text(latestUpdate.tagName)
+                                .foregroundStyle(latestUpdate.isNewerThanCurrent ? .primary : .secondary)
+                        }
+
+                        if latestUpdate.isNewerThanCurrent {
+                            LabeledContent("安装包") {
+                                Text(latestUpdate.assetSizeText)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+
+                    if let updateErrorMessage = appState.updateErrorMessage {
+                        Text(updateErrorMessage)
+                            .font(.system(size: 12))
+                            .foregroundStyle(.red)
+                    }
+
+                    if let lastUpdateCheckAt = appState.settings.lastUpdateCheckAt {
+                        Text("上次检查：\(DateFormatter.settingsFormatter.string(from: lastUpdateCheckAt))")
+                            .font(.system(size: 12))
+                            .foregroundStyle(.secondary)
+                    }
+
+                    HStack {
+                        Button(appState.isCheckingForUpdates ? "检查中..." : "检查更新") {
+                            Task {
+                                await appState.checkForUpdates(userInitiated: true)
+                            }
+                        }
+                        .disabled(appState.isCheckingForUpdates)
+
+                        Button(appState.isDownloadingUpdate ? "下载中..." : "下载最新版") {
+                            Task {
+                                await appState.downloadLatestUpdate()
+                            }
+                        }
+                        .disabled(appState.isDownloadingUpdate || appState.latestUpdate?.isNewerThanCurrent != true)
+
+                        Button("打开 Release") {
+                            appState.openLatestReleasePage()
+                        }
+
+                        Spacer()
+                    }
+                }
+
                 Section("网络") {
                     Stepper(
                         "超时：\(appState.settings.networkTimeoutSeconds) 秒",
@@ -132,7 +189,7 @@ struct AboutView: View {
             Text("NetEnvCheck")
                 .font(.system(size: 22, weight: .semibold))
 
-            Text("Version 1.2.0")
+            Text("Version 1.3.0")
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
 
@@ -147,4 +204,13 @@ struct AboutView: View {
         .padding(28)
         .frame(width: 360)
     }
+}
+
+private extension DateFormatter {
+    static let settingsFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .short
+        return formatter
+    }()
 }

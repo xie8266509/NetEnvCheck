@@ -49,12 +49,60 @@ struct AppSettings: Codable, Equatable, Sendable {
     var defaultPreset: RiskPreset = .balanced
     var historyLimit: Int = 100
     var notificationsEnabled: Bool = true
+    var automaticUpdateChecksEnabled: Bool = true
+    var lastUpdateCheckAt: Date?
     var autoRefreshEnabled: Bool = false
     var autoRefreshIntervalMinutes: Int = 30
     var networkTimeoutSeconds: Int = 10
     var retryCount: Int = 1
     var cacheTTLSeconds: Int = 30
     var enabledSources: Set<ProbeSourceID> = ProbeSourceID.defaultEnabled
+
+    enum CodingKeys: String, CodingKey {
+        case defaultPreset
+        case historyLimit
+        case notificationsEnabled
+        case automaticUpdateChecksEnabled
+        case lastUpdateCheckAt
+        case autoRefreshEnabled
+        case autoRefreshIntervalMinutes
+        case networkTimeoutSeconds
+        case retryCount
+        case cacheTTLSeconds
+        case enabledSources
+    }
+
+    init() {}
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        defaultPreset = try container.decodeIfPresent(RiskPreset.self, forKey: .defaultPreset) ?? .balanced
+        historyLimit = try container.decodeIfPresent(Int.self, forKey: .historyLimit) ?? 100
+        notificationsEnabled = try container.decodeIfPresent(Bool.self, forKey: .notificationsEnabled) ?? true
+        automaticUpdateChecksEnabled = try container.decodeIfPresent(Bool.self, forKey: .automaticUpdateChecksEnabled) ?? true
+        lastUpdateCheckAt = try container.decodeIfPresent(Date.self, forKey: .lastUpdateCheckAt)
+        autoRefreshEnabled = try container.decodeIfPresent(Bool.self, forKey: .autoRefreshEnabled) ?? false
+        autoRefreshIntervalMinutes = try container.decodeIfPresent(Int.self, forKey: .autoRefreshIntervalMinutes) ?? 30
+        networkTimeoutSeconds = try container.decodeIfPresent(Int.self, forKey: .networkTimeoutSeconds) ?? 10
+        retryCount = try container.decodeIfPresent(Int.self, forKey: .retryCount) ?? 1
+        cacheTTLSeconds = try container.decodeIfPresent(Int.self, forKey: .cacheTTLSeconds) ?? 30
+        enabledSources = try container.decodeIfPresent(Set<ProbeSourceID>.self, forKey: .enabledSources) ?? ProbeSourceID.defaultEnabled
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(defaultPreset, forKey: .defaultPreset)
+        try container.encode(historyLimit, forKey: .historyLimit)
+        try container.encode(notificationsEnabled, forKey: .notificationsEnabled)
+        try container.encode(automaticUpdateChecksEnabled, forKey: .automaticUpdateChecksEnabled)
+        try container.encodeIfPresent(lastUpdateCheckAt, forKey: .lastUpdateCheckAt)
+        try container.encode(autoRefreshEnabled, forKey: .autoRefreshEnabled)
+        try container.encode(autoRefreshIntervalMinutes, forKey: .autoRefreshIntervalMinutes)
+        try container.encode(networkTimeoutSeconds, forKey: .networkTimeoutSeconds)
+        try container.encode(retryCount, forKey: .retryCount)
+        try container.encode(cacheTTLSeconds, forKey: .cacheTTLSeconds)
+        try container.encode(enabledSources, forKey: .enabledSources)
+    }
 
     func isEnabled(_ source: ProbeSourceID) -> Bool {
         enabledSources.contains(source)

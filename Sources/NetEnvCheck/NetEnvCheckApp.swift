@@ -73,6 +73,7 @@ final class StatusBarController: NSObject {
         menu.addItem(NSMenuItem(title: "导出 JSON", action: #selector(exportJSON), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "导出 HTML", action: #selector(exportHTML), keyEquivalent: ""))
         menu.addItem(NSMenuItem.separator())
+        menu.addItem(NSMenuItem(title: "检查更新", action: #selector(checkForUpdates), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "设置...", action: #selector(showSettings), keyEquivalent: ","))
         menu.addItem(NSMenuItem(title: "隐私说明", action: #selector(showPrivacy), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "关于 NetEnvCheck", action: #selector(showAbout), keyEquivalent: ""))
@@ -138,6 +139,12 @@ final class StatusBarController: NSObject {
 
     @objc private func exportHTML() {
         AppState.shared.exportCurrentReport(as: .html)
+    }
+
+    @objc private func checkForUpdates() {
+        Task { @MainActor in
+            await AppState.shared.checkForUpdates(userInitiated: true)
+        }
     }
 
     @objc private func showSettings() {

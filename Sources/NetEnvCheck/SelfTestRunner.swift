@@ -100,6 +100,56 @@ enum SelfTestRunner {
         expect(normalized.networkTimeoutSeconds == 30, "settings should clamp timeout")
         expect(normalized.retryCount == 3, "settings should clamp retry count")
 
+        let oldSettingsJSON = Data("""
+        {
+          "defaultPreset": "strict",
+          "historyLimit": 50,
+          "notificationsEnabled": false,
+          "enabledSources": ["ipifyDual", "ipwho"]
+        }
+        """.utf8)
+        if let decodedSettings = try? JSONDecoder().decode(AppSettings.self, from: oldSettingsJSON) {
+            expect(decodedSettings.defaultPreset == .strict, "old settings should preserve preset")
+            expect(decodedSettings.historyLimit == 50, "old settings should preserve history limit")
+            expect(decodedSettings.automaticUpdateChecksEnabled, "old settings should default automatic update checks on")
+            expect(decodedSettings.enabledSources == Set([.ipifyDual, .ipwho]), "old settings should preserve enabled sources")
+        } else {
+            expect(false, "old settings JSON should decode")
+        }
+
+        expect(AppVersion("v1.3.0") > AppVersion("1.2.9"), "version comparison should detect newer tag")
+        expect(AppVersion("1.3.0") == AppVersion("v1.3.0"), "version comparison should ignore v prefix")
+        expect(AppVersion("1.3") == AppVersion("1.3.0"), "version comparison should pad missing components")
+
+        let releaseJSON = Data("""
+        {
+          "tag_name": "v1.3.0",
+          "name": "NetEnvCheck v1.3.0",
+          "body": "Update notes",
+          "html_url": "https://github.com/xie8266509/NetEnvCheck/releases/tag/v1.3.0",
+          "published_at": "2026-06-17T08:00:00Z",
+          "assets": [
+            {
+              "name": "NetEnvCheck-source.zip",
+              "browser_download_url": "https://example.com/source.zip",
+              "size": 10
+            },
+            {
+              "name": "NetEnvCheck.app.zip",
+              "browser_download_url": "https://example.com/app.zip",
+              "size": 2048
+            }
+          ]
+        }
+        """.utf8)
+        if let release = try? UpdateChecker.decodeRelease(releaseJSON, currentVersion: "1.2.0") {
+            expect(release.isNewerThanCurrent, "release should be newer than current version")
+            expect(release.assetName == "NetEnvCheck.app.zip", "release should select app zip asset")
+            expect(release.version == "1.3.0", "release version should strip v prefix")
+        } else {
+            expect(false, "release JSON should decode")
+        }
+
         let html = baseReport().htmlReport()
         expect(html.contains("<!doctype html>"), "HTML report should render a document")
         expect(html.contains("网络环境检测报告"), "HTML report should include report title")

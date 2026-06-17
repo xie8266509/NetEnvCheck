@@ -60,6 +60,11 @@ final class AppState: ObservableObject {
     @Published var webRTCPending = false
     @Published var refreshToken = UUID()
     @Published var lastActionMessage: String?
+    @Published var latestUpdate: UpdateRelease?
+    @Published var updateErrorMessage: String?
+    @Published var downloadedUpdateURL: URL?
+    @Published var isCheckingForUpdates = false
+    @Published var isDownloadingUpdate = false
     @Published var selectedPreset: RiskPreset = .balanced {
         didSet {
             report.scoringPreset = selectedPreset
@@ -101,6 +106,22 @@ final class AppState: ObservableObject {
         Task {
             await refresh()
         }
+
+        if shouldCheckForUpdatesAutomatically {
+            Task {
+                await checkForUpdates(userInitiated: false)
+            }
+        }
+    }
+
+    var currentVersionText: String {
+        UpdateChecker.currentVersion
+    }
+
+    var shouldCheckForUpdatesAutomatically: Bool {
+        guard settings.automaticUpdateChecksEnabled else { return false }
+        guard let lastUpdateCheckAt = settings.lastUpdateCheckAt else { return true }
+        return Date().timeIntervalSince(lastUpdateCheckAt) >= 24 * 60 * 60
     }
 
     func refresh() async {
@@ -179,6 +200,88 @@ final class AppState: ObservableObject {
     func openSystemSettings(_ destination: SystemSettingsDestination) {
         let didOpen = SystemSettingsOpener.open(destination)
         lastActionMessage = didOpen ? "已打开\(destination.title)" : "无法打开系统设置"
+    }
+
+    func checkForUpdates(userInitiated: Bool) async {
+        guard !isCheckingForUpdates else { return }
+
+        isCheckingForUpdates = true
+        updateErrorMessage = nil
+        if userInitiated {
+            lastActionMessage = "正在检查更新"
+        }
+
+        defer {
+            isCheckingForUpdates = false
+        }
+
+        do {
+            let release = try await UpdateChecker.checkLatestRelease(currentVersion: currentVersionText)
+            latestUpdate = release
+            markUpdateChecked()
+
+            if release.isNewerThanCurrent {
+                lastActionMessage = "发现新版本 \(release.tagName)"
+                if userInitiated || settings.automaticUpdateChecksEnabled {
+                    presentUpdateAvailableAlert(release)
+                }
+            } else {
+                lastActionMessage = "已是最新版本"
+                if userInitiated {
+                    presentNoUpdateAlert(release)
+                }
+            }
+        } catch {
+            let message = error.localizedDescription
+            updateErrorMessage = message
+            markUpdateChecked()
+            lastActionMessage = "检查更新失败"
+            if userInitiated {
+                presentUpdateErrorAlert(message)
+            }
+        }
+    }
+
+    func openLatestReleasePage() {
+        if let latestUpdate {
+            NSWorkspace.shared.open(latestUpdate.htmlURL)
+        } else if let url = URL(string: "https://github.com/\(UpdateChecker.repository)/releases/latest") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
+    func downloadLatestUpdate() async {
+        if let latestUpdate {
+            await downloadUpdate(latestUpdate)
+            return
+        }
+
+        await checkForUpdates(userInitiated: true)
+        if let latestUpdate, latestUpdate.isNewerThanCurrent {
+            await downloadUpdate(latestUpdate)
+        }
+    }
+
+    func downloadUpdate(_ release: UpdateRelease) async {
+        guard !isDownloadingUpdate else { return }
+
+        isDownloadingUpdate = true
+        lastActionMessage = "正在下载更新"
+
+        defer {
+            isDownloadingUpdate = false
+        }
+
+        do {
+            let url = try await UpdateChecker.downloadAppZip(from: release)
+            downloadedUpdateURL = url
+            lastActionMessage = "更新包已下载"
+            NSWorkspace.shared.activateFileViewerSelecting([url])
+            presentUpdateDownloadedAlert(url: url)
+        } catch {
+            lastActionMessage = "下载更新失败"
+            presentUpdateErrorAlert(error.localizedDescription)
+        }
     }
 
     func exportCurrentReport(as format: ReportExportFormat) {
@@ -306,6 +409,72 @@ final class AppState: ObservableObject {
                 await self?.refresh()
             }
         }
+    }
+
+    private func markUpdateChecked() {
+        settings.lastUpdateCheckAt = Date()
+        settingsStore.save(settings)
+    }
+
+    private func presentUpdateAvailableAlert(_ release: UpdateRelease) {
+        let alert = NSAlert()
+        alert.messageText = "发现新版本 \(release.tagName)"
+        alert.informativeText = updateAlertText(for: release)
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "下载更新")
+        alert.addButton(withTitle: "打开 Release")
+        alert.addButton(withTitle: "稍后")
+
+        let response = alert.runModal()
+        if response == .alertFirstButtonReturn {
+            Task { @MainActor in
+                await downloadUpdate(release)
+            }
+        } else if response == .alertSecondButtonReturn {
+            NSWorkspace.shared.open(release.htmlURL)
+        }
+    }
+
+    private func presentNoUpdateAlert(_ release: UpdateRelease) {
+        let alert = NSAlert()
+        alert.messageText = "已是最新版本"
+        alert.informativeText = "当前版本：\(currentVersionText)\n最新版本：\(release.tagName)"
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "好")
+        alert.runModal()
+    }
+
+    private func presentUpdateDownloadedAlert(url: URL) {
+        let alert = NSAlert()
+        alert.messageText = "更新包已下载"
+        alert.informativeText = "已下载到：\(url.path)\n\n请退出 NetEnvCheck，解压后将新版 App 拖入 Applications。"
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "好")
+        alert.runModal()
+    }
+
+    private func presentUpdateErrorAlert(_ message: String) {
+        let alert = NSAlert()
+        alert.messageText = "更新检查失败"
+        alert.informativeText = message
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "好")
+        alert.runModal()
+    }
+
+    private func updateAlertText(for release: UpdateRelease) -> String {
+        let notes = release.body
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .prefix(900)
+        let releaseNotes = notes.isEmpty ? "此版本没有发布说明。" : String(notes)
+
+        return """
+        当前版本：\(currentVersionText)
+        最新版本：\(release.tagName)
+        安装包：\(release.assetName)（\(release.assetSizeText)）
+
+        \(releaseNotes)
+        """
     }
 }
 
