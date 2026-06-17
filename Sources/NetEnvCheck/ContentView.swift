@@ -609,7 +609,7 @@ private struct DetailTabsView: View {
             case .environment:
                 EnvironmentDetailView(report: report)
             case .risk:
-                RiskDetailView(report: report)
+                RiskDetailView(report: report, comparison: comparison)
             case .sources:
                 SourceDetailView(report: report)
             case .history:
@@ -657,7 +657,10 @@ private struct EnvironmentDetailView: View {
 }
 
 private struct RiskDetailView: View {
+    @EnvironmentObject private var appState: AppState
     var report: CheckReport
+    var comparison: ReportComparison?
+    @State private var handledPlanIDs: Set<String> = []
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
@@ -665,6 +668,11 @@ private struct RiskDetailView: View {
                 SummaryStat(title: "可信度", value: report.confidence.title, color: report.confidence.foreground)
                 SummaryStat(title: "评分预设", value: report.scoringPreset.title, color: AppTheme.clay)
                 SummaryStat(title: "扣分项", value: "\(report.scoreBreakdown.count)", color: report.scoreBreakdown.isEmpty ? AppTheme.moss : AppTheme.amber)
+                SummaryStat(
+                    title: "预计改善",
+                    value: report.remediationPlans.isEmpty ? "--" : "+\(report.estimatedRemediationGain)",
+                    color: report.remediationPlans.isEmpty ? Color.secondary : AppTheme.moss
+                )
             }
 
             VStack(spacing: 0) {
@@ -677,17 +685,20 @@ private struct RiskDetailView: View {
                 }
             }
 
-            if !report.remediationTips.isEmpty {
-                VStack(alignment: .leading, spacing: 10) {
-                    Text("修复建议")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(.secondary)
-
-                    ForEach(report.remediationTips, id: \.self) { tip in
-                        FindingInlineRow(text: tip, symbol: "wrench.and.screwdriver", color: AppTheme.moss)
-                    }
-                }
-            }
+            RemediationCenterView(
+                report: report,
+                comparison: comparison,
+                handledPlanIDs: handledPlanIDs,
+                copyAllAction: appState.copyRemediationGuide,
+                refreshAction: {
+                    Task { await appState.refresh() }
+                },
+                markHandledAction: { plan in
+                    handledPlanIDs.insert(plan.id)
+                    appState.showMessage("已标记处理")
+                },
+                actionHandler: perform
+            )
 
             if !report.errors.isEmpty {
                 VStack(alignment: .leading, spacing: 10) {
@@ -701,6 +712,345 @@ private struct RiskDetailView: View {
                 }
             }
         }
+    }
+
+    private func perform(_ action: RemediationAction) {
+        switch action.kind {
+        case .openSettings(let destination):
+            appState.openSystemSettings(destination)
+        case .copyCommand(let command):
+            appState.copyText(command, message: "命令已复制")
+        case .copyGuide(let guide):
+            appState.copyText(guide, message: "指南已复制")
+        case .copyText(let text):
+            appState.copyText(text, message: "内容已复制")
+        case .refresh:
+            Task { await appState.refresh() }
+        case .markHandled:
+            appState.showMessage("已标记处理")
+        }
+    }
+}
+
+private struct RemediationCenterView: View {
+    var report: CheckReport
+    var comparison: ReportComparison?
+    var handledPlanIDs: Set<String>
+    var copyAllAction: () -> Void
+    var refreshAction: () -> Void
+    var markHandledAction: (RemediationPlan) -> Void
+    var actionHandler: (RemediationAction) -> Void
+
+    private var plans: [RemediationPlan] {
+        report.remediationPlans
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .firstTextBaseline) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("修复中心")
+                        .font(.system(size: 14, weight: .semibold))
+
+                    Text(plans.isEmpty ? "当前没有可执行的修复项" : "按预计改善优先级排序，建议处理后立即复测")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer()
+
+                Button {
+                    copyAllAction()
+                } label: {
+                    Label("复制全部方案", systemImage: "doc.on.doc")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .disabled(plans.isEmpty)
+
+                Button {
+                    refreshAction()
+                } label: {
+                    Label("应用后重新检测", systemImage: "arrow.clockwise")
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+            }
+
+            RemediationProgressView(comparison: comparison)
+
+            if plans.isEmpty {
+                FindingInlineRow(text: "当前信号较一致，无需修复。保持当前网络、时区、语言和 DNS 设置即可。", symbol: "checkmark.seal", color: AppTheme.moss)
+            } else {
+                VStack(spacing: 0) {
+                    ForEach(plans) { plan in
+                        RemediationPlanRow(
+                            plan: plan,
+                            isHandled: handledPlanIDs.contains(plan.id),
+                            markHandledAction: {
+                                markHandledAction(plan)
+                            },
+                            actionHandler: actionHandler
+                        )
+
+                        if plan.id != plans.last?.id {
+                            Divider()
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+private struct RemediationProgressView: View {
+    var comparison: ReportComparison?
+
+    var body: some View {
+        if let comparison {
+            HStack(spacing: 12) {
+                RemediationMetric(
+                    title: "评分变化",
+                    value: scoreDeltaText(comparison),
+                    color: scoreDelta(comparison) >= 0 ? AppTheme.moss : AppTheme.clay
+                )
+                RemediationMetric(
+                    title: "已改善项",
+                    value: "\(resolvedImpactIDs(comparison).count)",
+                    color: AppTheme.moss
+                )
+                RemediationMetric(
+                    title: "新增风险",
+                    value: "\(newImpactIDs(comparison).count)",
+                    color: newImpactIDs(comparison).isEmpty ? Color.secondary : AppTheme.amber
+                )
+            }
+
+            let resolved = resolvedImpactTitles(comparison)
+            if !resolved.isEmpty {
+                FindingInlineRow(
+                    text: "已改善：\(resolved.prefix(3).joined(separator: "、"))",
+                    symbol: "arrow.up.right.circle",
+                    color: AppTheme.moss
+                )
+            }
+        } else {
+            Text("完成优化后重新检测，这里会显示评分变化、已改善项和新增风险。")
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private func scoreDelta(_ comparison: ReportComparison) -> Int {
+        comparison.current.riskScore - comparison.previous.riskScore
+    }
+
+    private func scoreDeltaText(_ comparison: ReportComparison) -> String {
+        let delta = scoreDelta(comparison)
+        if delta > 0 { return "+\(delta)" }
+        return "\(delta)"
+    }
+
+    private func resolvedImpactIDs(_ comparison: ReportComparison) -> Set<String> {
+        let previous = Set(comparison.previous.scoreBreakdown.map(\.id))
+        let current = Set(comparison.current.scoreBreakdown.map(\.id))
+        return previous.subtracting(current)
+    }
+
+    private func newImpactIDs(_ comparison: ReportComparison) -> Set<String> {
+        let previous = Set(comparison.previous.scoreBreakdown.map(\.id))
+        let current = Set(comparison.current.scoreBreakdown.map(\.id))
+        return current.subtracting(previous)
+    }
+
+    private func resolvedImpactTitles(_ comparison: ReportComparison) -> [String] {
+        let resolved = resolvedImpactIDs(comparison)
+        return comparison.previous.scoreBreakdown
+            .filter { resolved.contains($0.id) }
+            .map(\.title)
+    }
+}
+
+private struct RemediationMetric: View {
+    var title: String
+    var value: String
+    var color: Color
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(.secondary)
+
+            Text(value)
+                .font(.system(size: 15, weight: .semibold, design: .rounded))
+                .foregroundStyle(color)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.vertical, 10)
+        .padding(.horizontal, 12)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(AppTheme.elevated.opacity(0.70))
+        )
+    }
+}
+
+private struct RemediationPlanRow: View {
+    var plan: RemediationPlan
+    var isHandled: Bool
+    var markHandledAction: () -> Void
+    var actionHandler: (RemediationAction) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: plan.category.symbolName)
+                    .foregroundStyle(categoryColor)
+                    .frame(width: 22)
+
+                VStack(alignment: .leading, spacing: 7) {
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Text(plan.title)
+                            .font(.system(size: 14, weight: .semibold))
+
+                        if isHandled {
+                            Label("已处理", systemImage: "checkmark.circle.fill")
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundStyle(AppTheme.moss)
+                        }
+                    }
+
+                    Text(plan.summary)
+                        .font(.system(size: 13))
+                        .foregroundStyle(.primary)
+                        .lineLimit(nil)
+
+                    Text(plan.whyItMatters)
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(nil)
+                }
+
+                Spacer(minLength: 12)
+
+                VStack(alignment: .trailing, spacing: 6) {
+                    Text("+\(plan.estimatedScoreGain)")
+                        .font(.system(size: 18, weight: .semibold, design: .rounded))
+                        .foregroundStyle(AppTheme.moss)
+
+                    Text("预计改善")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                }
+                .frame(width: 72, alignment: .trailing)
+            }
+
+            FlowLayout(spacing: 8, rowSpacing: 8) {
+                RemediationTag(text: plan.category.title, symbol: plan.category.symbolName, color: categoryColor)
+                RemediationTag(text: plan.difficulty.title, symbol: "speedometer", color: AppTheme.amber)
+                RemediationTag(text: plan.safety.title, symbol: "lock.shield", color: safetyColor)
+            }
+
+            VStack(alignment: .leading, spacing: 7) {
+                ForEach(Array(plan.steps.enumerated()), id: \.offset) { index, step in
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Text("\(index + 1)")
+                            .font(.system(size: 11, weight: .semibold, design: .rounded))
+                            .foregroundStyle(categoryColor)
+                            .frame(width: 20, height: 20)
+                            .background(
+                                Circle()
+                                    .fill(categoryColor.opacity(0.10))
+                            )
+
+                        Text(step)
+                            .font(.system(size: 12))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(nil)
+                    }
+                }
+            }
+
+            FlowLayout(spacing: 8, rowSpacing: 8) {
+                ForEach(plan.actions) { action in
+                    RemediationActionButton(action: action) {
+                        actionHandler(action)
+                    }
+                }
+
+                Button {
+                    markHandledAction()
+                } label: {
+                    Label("标记已处理", systemImage: "checkmark.circle")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .disabled(isHandled)
+            }
+        }
+        .padding(.vertical, 16)
+    }
+
+    private var categoryColor: Color {
+        switch plan.category {
+        case .network:
+            Color.accentColor
+        case .browser:
+            AppTheme.amber
+        case .system:
+            AppTheme.moss
+        case .identity:
+            AppTheme.clay
+        case .data:
+            Color.secondary
+        }
+    }
+
+    private var safetyColor: Color {
+        switch plan.safety {
+        case .safe:
+            AppTheme.moss
+        case .manual:
+            AppTheme.amber
+        case .admin:
+            AppTheme.clay
+        }
+    }
+}
+
+private struct RemediationTag: View {
+    var text: String
+    var symbol: String
+    var color: Color
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Image(systemName: symbol)
+            Text(text)
+        }
+        .font(.system(size: 11, weight: .medium))
+        .foregroundStyle(color)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(
+            Capsule(style: .continuous)
+                .fill(color.opacity(0.10))
+        )
+    }
+}
+
+private struct RemediationActionButton: View {
+    var action: RemediationAction
+    var perform: () -> Void
+
+    var body: some View {
+        Button(action: perform) {
+            Label(action.title, systemImage: action.systemImage)
+        }
+        .buttonStyle(.bordered)
+        .controlSize(.small)
+        .help(action.safety.title)
     }
 }
 

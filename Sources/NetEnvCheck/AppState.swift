@@ -162,6 +162,25 @@ final class AppState: ObservableObject {
         lastActionMessage = "报告已复制"
     }
 
+    func copyText(_ text: String, message: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+        lastActionMessage = message
+    }
+
+    func showMessage(_ message: String) {
+        lastActionMessage = message
+    }
+
+    func copyRemediationGuide() {
+        copyText(report.remediationGuide(), message: "修复方案已复制")
+    }
+
+    func openSystemSettings(_ destination: SystemSettingsDestination) {
+        let didOpen = SystemSettingsOpener.open(destination)
+        lastActionMessage = didOpen ? "已打开\(destination.title)" : "无法打开系统设置"
+    }
+
     func exportCurrentReport(as format: ReportExportFormat) {
         let panel = NSSavePanel()
         panel.title = "导出\(format.title)报告"

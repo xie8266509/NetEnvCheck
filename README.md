@@ -36,6 +36,8 @@ GitHub: https://github.com/xie8266509/NetEnvCheck
 - 浏览器时区/语言、User-Agent、HTTP Accept-Language 检测
 - 均衡、严格、宽松三种评分预设
 - 扣分明细、数据源状态、耗时、错误提示和可信度
+- 修复中心：按风险项生成修复方案、预计改善分、操作步骤、复制命令/指南、打开系统设置和复测
+- 优化前后对比：复测后展示评分变化、已改善项和新增风险
 - 历史记录、前后对比、Markdown/JSON 导出
 - 历史记录搜索、单条删除、清空、评分趋势、Markdown/JSON/HTML 导出
 - 菜单栏常驻、风险变化通知、关于页和隐私说明
@@ -110,8 +112,8 @@ Scripts/package-app.sh
 发布新版本示例：
 
 ```bash
-git tag v1.2.0
-git push origin v1.2.0
+git tag v1.3.0
+git push origin v1.3.0
 ```
 
 ## 数据源
@@ -127,7 +129,9 @@ git push origin v1.2.0
 
 ## 说明
 
-检测依赖公开网络接口、本机系统设置和 WebView 能力，结果仅供参考，不保证与 Claude 或任何服务的官方风控判定一致。代理/VPN 精准识别通常需要商业 IP 情报库，本项目已把评分和来源状态做成可解释结构，后续可以继续接入 MaxMind、IPinfo、IPQualityScore、Scamalytics 等数据源。
+检测依赖公开网络接口、本机系统设置和 WebView 能力，结果仅供参考，不保证与 Claude 或任何服务的官方风控判定一致。代理/VPN 精准识别通常需要商业 IP 情报库，本项目已把评分、来源状态和修复建议做成可解释结构，后续可以继续接入 MaxMind、IPinfo、IPQualityScore、Scamalytics 等数据源。
+
+修复中心默认只做安全辅助：打开相关系统设置、复制命令、复制指南和重新检测。涉及 DNS、IPv6、代理等可能影响系统网络的操作不会自动执行，需要用户确认后自行处理。
 
 ## 可选 IPinfo Core
 

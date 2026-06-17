@@ -21,6 +21,8 @@ enum SelfTestRunner {
         expect(datacenterReport.riskScore == 78, "datacenter score should be 78")
         expect(datacenterReport.scoreBreakdown.contains { $0.id == "datacenter" && $0.points == -22 }, "datacenter penalty should be explained")
         expect(datacenterReport.riskBand == .medium, "datacenter report should be medium risk")
+        expect(datacenterReport.remediationPlans.contains { $0.id == "datacenter" }, "datacenter remediation plan should be generated")
+        expect(datacenterReport.remediationGuide().contains("更换住宅或移动出口"), "remediation guide should include datacenter plan")
 
         var strictReport = baseReport()
         strictReport.scoringPreset = .strict
@@ -28,6 +30,7 @@ enum SelfTestRunner {
         expect(strictReport.riskScore == 58, "strict proxy score should be 58")
         expect(strictReport.scoreBreakdown.contains { $0.id == "proxy" && $0.points == -42 }, "strict proxy penalty should be scaled")
         expect(strictReport.riskBand == .high, "strict proxy report should be high risk")
+        expect(strictReport.remediationPlans.contains { $0.id == "proxy-vpn-tor" }, "proxy remediation plan should be generated")
 
         var conflictReport = baseReport()
         conflictReport.observations.append(
@@ -52,6 +55,21 @@ enum SelfTestRunner {
         expect(conflictReport.countryConflict, "country conflict should be detected")
         expect(conflictReport.confidence == .medium, "conflicting countries should lower confidence")
         expect(conflictReport.scoreBreakdown.contains { $0.id == "country-conflict" }, "country conflict should be explained")
+        expect(conflictReport.remediationPlans.contains { $0.id == "country-conflict" }, "country conflict remediation should be generated")
+
+        var settingsReport = baseReport()
+        settingsReport.localTimezone = "America/Los_Angeles"
+        settingsReport.preferredLanguage = "zh-CN"
+        settingsReport.browser.language = "zh-CN"
+        settingsReport.browser.httpHeaders = ["Accept-Language": "zh-CN,zh;q=0.9"]
+        settingsReport.dns.nameservers = ["1.1.1.1"]
+        expect(settingsReport.scoreBreakdown.contains { $0.id == "system-timezone" }, "system timezone mismatch should be scored")
+        expect(settingsReport.scoreBreakdown.contains { $0.id == "system-language" }, "system language mismatch should be scored")
+        expect(settingsReport.scoreBreakdown.contains { $0.id == "dns" }, "DNS resolver risk should be scored")
+        expect(settingsReport.remediationPlans.contains { $0.id == "timezone" }, "timezone remediation plan should be generated")
+        expect(settingsReport.remediationPlans.contains { $0.id == "language" }, "language remediation plan should be generated")
+        expect(settingsReport.remediationPlans.contains { $0.id == "dns" }, "DNS remediation plan should be generated")
+        expect(settingsReport.estimatedRemediationGain >= 27, "estimated remediation gain should include settings plans")
 
         let directory = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("NetEnvCheckTests-\(UUID().uuidString)", isDirectory: true)

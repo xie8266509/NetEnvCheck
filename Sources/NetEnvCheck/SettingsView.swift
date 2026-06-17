@@ -132,7 +132,7 @@ struct AboutView: View {
             Text("NetEnvCheck")
                 .font(.system(size: 22, weight: .semibold))
 
-            Text("Version 1.1.1")
+            Text("Version 1.2.0")
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
 

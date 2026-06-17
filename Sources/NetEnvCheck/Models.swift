@@ -806,6 +806,18 @@ struct CheckReport: Codable, Sendable {
         return Self.unique(tips)
     }
 
+    var remediationPlans: [RemediationPlan] {
+        RemediationEngine.plans(for: self)
+    }
+
+    var estimatedRemediationGain: Int {
+        remediationPlans.map(\.estimatedScoreGain).reduce(0, +)
+    }
+
+    func remediationGuide() -> String {
+        RemediationEngine.guide(for: self)
+    }
+
     func plainTextReport() -> String {
         let formatter = DateFormatter()
         formatter.dateStyle = .medium
