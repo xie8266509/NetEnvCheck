@@ -6,6 +6,25 @@ GitHub: https://github.com/xie8266509/NetEnvCheck
 
 下载最新版本: https://github.com/xie8266509/NetEnvCheck/releases/latest
 
+## 截图
+
+<p>
+  <img src="docs/screenshots/overview.png" alt="NetEnvCheck 主界面" width="720">
+</p>
+
+<p>
+  <img src="docs/screenshots/risk.png" alt="风险分析" width="420">
+  <img src="docs/screenshots/sources.png" alt="数据源状态" width="420">
+</p>
+
+<p>
+  <img src="docs/screenshots/history.png" alt="历史记录" width="720">
+</p>
+
+<p>
+  <img src="docs/screenshots/settings.png" alt="设置窗口" width="420">
+</p>
+
 ## 当前能力
 
 - 出口公网 IP、IPv4、IPv6
@@ -91,8 +110,8 @@ Scripts/package-app.sh
 发布新版本示例：
 
 ```bash
-git tag v1.1.0
-git push origin v1.1.0
+git tag v1.2.0
+git push origin v1.2.0
 ```
 
 ## 数据源

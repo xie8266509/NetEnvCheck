@@ -89,6 +89,7 @@ struct SettingsView: View {
                 }
             }
             .formStyle(.grouped)
+            .hiddenScrollIndicators()
         }
         .padding(24)
         .frame(width: 560, height: 680)
@@ -131,7 +132,7 @@ struct AboutView: View {
             Text("NetEnvCheck")
                 .font(.system(size: 22, weight: .semibold))
 
-            Text("Version 1.1.0")
+            Text("Version 1.1.1")
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
 
