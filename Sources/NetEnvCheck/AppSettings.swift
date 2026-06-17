@@ -51,6 +51,8 @@ struct AppSettings: Codable, Equatable, Sendable {
     var notificationsEnabled: Bool = true
     var automaticUpdateChecksEnabled: Bool = true
     var lastUpdateCheckAt: Date?
+    var ignoredUpdateVersion: String?
+    var updateReminderAfter: Date?
     var autoRefreshEnabled: Bool = false
     var autoRefreshIntervalMinutes: Int = 30
     var networkTimeoutSeconds: Int = 10
@@ -64,6 +66,8 @@ struct AppSettings: Codable, Equatable, Sendable {
         case notificationsEnabled
         case automaticUpdateChecksEnabled
         case lastUpdateCheckAt
+        case ignoredUpdateVersion
+        case updateReminderAfter
         case autoRefreshEnabled
         case autoRefreshIntervalMinutes
         case networkTimeoutSeconds
@@ -81,6 +85,8 @@ struct AppSettings: Codable, Equatable, Sendable {
         notificationsEnabled = try container.decodeIfPresent(Bool.self, forKey: .notificationsEnabled) ?? true
         automaticUpdateChecksEnabled = try container.decodeIfPresent(Bool.self, forKey: .automaticUpdateChecksEnabled) ?? true
         lastUpdateCheckAt = try container.decodeIfPresent(Date.self, forKey: .lastUpdateCheckAt)
+        ignoredUpdateVersion = try container.decodeIfPresent(String.self, forKey: .ignoredUpdateVersion)
+        updateReminderAfter = try container.decodeIfPresent(Date.self, forKey: .updateReminderAfter)
         autoRefreshEnabled = try container.decodeIfPresent(Bool.self, forKey: .autoRefreshEnabled) ?? false
         autoRefreshIntervalMinutes = try container.decodeIfPresent(Int.self, forKey: .autoRefreshIntervalMinutes) ?? 30
         networkTimeoutSeconds = try container.decodeIfPresent(Int.self, forKey: .networkTimeoutSeconds) ?? 10
@@ -96,6 +102,8 @@ struct AppSettings: Codable, Equatable, Sendable {
         try container.encode(notificationsEnabled, forKey: .notificationsEnabled)
         try container.encode(automaticUpdateChecksEnabled, forKey: .automaticUpdateChecksEnabled)
         try container.encodeIfPresent(lastUpdateCheckAt, forKey: .lastUpdateCheckAt)
+        try container.encodeIfPresent(ignoredUpdateVersion, forKey: .ignoredUpdateVersion)
+        try container.encodeIfPresent(updateReminderAfter, forKey: .updateReminderAfter)
         try container.encode(autoRefreshEnabled, forKey: .autoRefreshEnabled)
         try container.encode(autoRefreshIntervalMinutes, forKey: .autoRefreshIntervalMinutes)
         try container.encode(networkTimeoutSeconds, forKey: .networkTimeoutSeconds)

@@ -64,16 +64,33 @@ struct UpdateRelease: Identifiable, Equatable, Sendable {
     }
 }
 
+struct DownloadedUpdate: Equatable, Sendable {
+    var fileURL: URL
+    var expectedSize: Int
+    var actualSize: Int
+
+    var isSizeVerified: Bool {
+        expectedSize <= 0 || expectedSize == actualSize
+    }
+
+    var actualSizeText: String {
+        ByteCountFormatter.string(fromByteCount: Int64(actualSize), countStyle: .file)
+    }
+}
+
 enum UpdateCheckError: LocalizedError {
     case invalidResponse
     case releaseAssetMissing
+    case downloadedFileSizeMismatch(expected: Int, actual: Int)
 
     var errorDescription: String? {
         switch self {
         case .invalidResponse:
-            "GitHub Releases 返回异常"
+            "无法读取 GitHub Releases，请检查网络后重试。"
         case .releaseAssetMissing:
-            "未找到 NetEnvCheck.app.zip 发布包"
+            "最新 Release 中没有找到 NetEnvCheck.app.zip 发布包。"
+        case let .downloadedFileSizeMismatch(expected, actual):
+            "下载包大小不一致，预期 \(ByteCountFormatter.string(fromByteCount: Int64(expected), countStyle: .file))，实际 \(ByteCountFormatter.string(fromByteCount: Int64(actual), countStyle: .file))。请重新下载。"
         }
     }
 }
@@ -81,7 +98,7 @@ enum UpdateCheckError: LocalizedError {
 enum UpdateChecker {
     static let repository = "xie8266509/NetEnvCheck"
     static let latestReleaseURL = URL(string: "https://api.github.com/repos/xie8266509/NetEnvCheck/releases/latest")!
-    static let fallbackCurrentVersion = "1.3.0"
+    static let fallbackCurrentVersion = "1.6.0"
 
     static var currentVersion: String {
         Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? fallbackCurrentVersion
@@ -129,7 +146,7 @@ enum UpdateChecker {
         )
     }
 
-    static func downloadAppZip(from release: UpdateRelease) async throws -> URL {
+    static func downloadAppZip(from release: UpdateRelease) async throws -> DownloadedUpdate {
         var request = URLRequest(url: release.assetDownloadURL)
         request.timeoutInterval = 60
         request.setValue("NetEnvCheck", forHTTPHeaderField: "User-Agent")
@@ -148,7 +165,15 @@ enum UpdateChecker {
         }
 
         try FileManager.default.moveItem(at: temporaryURL, to: destination)
-        return destination
+        let attributes = try FileManager.default.attributesOfItem(atPath: destination.path)
+        let actualSize = attributes[.size] as? Int ?? 0
+
+        guard release.assetSize <= 0 || actualSize == release.assetSize else {
+            try? FileManager.default.removeItem(at: destination)
+            throw UpdateCheckError.downloadedFileSizeMismatch(expected: release.assetSize, actual: actualSize)
+        }
+
+        return DownloadedUpdate(fileURL: destination, expectedSize: release.assetSize, actualSize: actualSize)
     }
 }
 

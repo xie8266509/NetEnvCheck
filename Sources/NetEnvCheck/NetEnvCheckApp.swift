@@ -72,6 +72,7 @@ final class StatusBarController: NSObject {
         menu.addItem(NSMenuItem(title: "导出 Markdown", action: #selector(exportMarkdown), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "导出 JSON", action: #selector(exportJSON), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "导出 HTML", action: #selector(exportHTML), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "导出优化报告", action: #selector(exportOptimization), keyEquivalent: ""))
         menu.addItem(NSMenuItem.separator())
         menu.addItem(NSMenuItem(title: "检查更新", action: #selector(checkForUpdates), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "设置...", action: #selector(showSettings), keyEquivalent: ","))
@@ -107,7 +108,7 @@ final class StatusBarController: NSObject {
 
         statusItem.button?.image = NSImage(systemSymbolName: symbolName, accessibilityDescription: "NetEnvCheck")
         statusItem.button?.title = report.publicIP == nil ? "" : " \(report.riskScore)"
-        statusItem.button?.toolTip = "\(report.riskBand.title) · \(report.publicIP ?? "--")"
+        statusItem.button?.toolTip = "\(report.riskBand.title) · \(report.publicIP ?? "--") · \(DateFormatter.statusFormatter.string(from: report.generatedAt))"
     }
 
     @objc private func openApp() {
@@ -141,6 +142,10 @@ final class StatusBarController: NSObject {
         AppState.shared.exportCurrentReport(as: .html)
     }
 
+    @objc private func exportOptimization() {
+        AppState.shared.exportCurrentReport(as: .optimization)
+    }
+
     @objc private func checkForUpdates() {
         Task { @MainActor in
             await AppState.shared.checkForUpdates(userInitiated: true)
@@ -162,4 +167,13 @@ final class StatusBarController: NSObject {
     @objc private func showAbout() {
         AboutWindowController.shared.show()
     }
+}
+
+private extension DateFormatter {
+    static let statusFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .none
+        formatter.timeStyle = .short
+        return formatter
+    }()
 }

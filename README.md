@@ -13,16 +13,11 @@ GitHub: https://github.com/xie8266509/NetEnvCheck
 </p>
 
 <p>
-  <img src="docs/screenshots/risk.png" alt="风险分析" width="420">
-  <img src="docs/screenshots/sources.png" alt="数据源状态" width="420">
+  <img src="docs/screenshots/remediation.png" alt="修复中心" width="720">
 </p>
 
 <p>
   <img src="docs/screenshots/history.png" alt="历史记录" width="720">
-</p>
-
-<p>
-  <img src="docs/screenshots/settings.png" alt="设置窗口" width="420">
 </p>
 
 ## 当前能力
@@ -39,7 +34,9 @@ GitHub: https://github.com/xie8266509/NetEnvCheck
 - 修复中心：按风险项生成修复方案、预计改善分、操作步骤、复制命令/指南、打开系统设置和复测
 - 优化前后对比：复测后展示评分变化、已改善项和新增风险
 - GitHub Releases 更新检查：启动时每日最多自动检查一次，也可在设置页或菜单栏手动检查
-- 半自动更新下载：发现新版后可下载 `NetEnvCheck.app.zip` 到 Downloads，并在 Finder 中定位
+- 半自动更新下载：发现新版后可下载 `NetEnvCheck.app.zip` 到 Downloads，校验文件大小并在 Finder 中定位
+- 本机网络诊断：系统代理、VPN/隧道接口、DNS 外显解析器探测
+- 环境优化报告：导出当前风险、修复优先级、处理步骤和复测对比
 - 历史记录、前后对比、Markdown/JSON 导出
 - 历史记录搜索、单条删除、清空、评分趋势、Markdown/JSON/HTML 导出
 - 菜单栏常驻、风险变化通知、关于页和隐私说明
@@ -114,8 +111,8 @@ Scripts/package-app.sh
 发布新版本示例：
 
 ```bash
-git tag v1.4.0
-git push origin v1.4.0
+git tag v1.7.0
+git push origin v1.7.0
 ```
 
 ## 数据源
@@ -125,6 +122,8 @@ git push origin v1.4.0
 - ipapi.is：代理/VPN/Tor/数据中心/滥用信号
 - ifconfig.co：额外归属地和 ASN 参考
 - scutil --dns：本机 DNS 解析器
+- dig TXT o-o.myaddr.l.google.com：系统 DNS 外显解析器参考
+- scutil --proxy / ifconfig：系统代理与网络接口摘要
 - WebRTC STUN：浏览器候选公网 IP
 - httpbin headers：WebView HTTP 请求头回显
 - IPinfo Core：可选高级 IP 情报源，需要 token

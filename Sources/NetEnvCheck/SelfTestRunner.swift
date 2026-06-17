@@ -71,6 +71,18 @@ enum SelfTestRunner {
         expect(settingsReport.remediationPlans.contains { $0.id == "dns" }, "DNS remediation plan should be generated")
         expect(settingsReport.estimatedRemediationGain >= 27, "estimated remediation gain should include settings plans")
 
+        var localDiagnosticsReport = baseReport()
+        localDiagnosticsReport.systemProxy = SystemProxyInfo(httpEnabled: true)
+        localDiagnosticsReport.networkInterfaces = NetworkInterfaceSnapshot(activeInterfaces: ["en0", "utun4"], tunnelInterfaces: ["utun4"])
+        localDiagnosticsReport.dns.observedResolverIPs = ["8.8.8.8"]
+        expect(localDiagnosticsReport.scoreBreakdown.contains { $0.id == "system-proxy" }, "system proxy should be scored")
+        expect(localDiagnosticsReport.scoreBreakdown.contains { $0.id == "tunnel-interface" }, "tunnel interface should be scored")
+        expect(localDiagnosticsReport.remediationPlans.contains { $0.id == "system-proxy" }, "system proxy remediation should be generated")
+        expect(localDiagnosticsReport.remediationPlans.contains { $0.id == "tunnel-interface" }, "tunnel remediation should be generated")
+        expect(localDiagnosticsReport.optimizationReport().contains("环境优化报告"), "optimization report should render")
+        expect(localDiagnosticsReport.dns.observedResolverDisplayText == "8.8.8.8", "observed DNS resolver should display")
+        expect(FriendlyErrorMessage.text("A TLS error caused the secure connection to fail.", source: "ipify IPv6").contains("IPv6"), "IPv6 TLS errors should be friendly")
+
         let directory = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("NetEnvCheckTests-\(UUID().uuidString)", isDirectory: true)
         let store = HistoryStore(fileURL: directory.appendingPathComponent("history.json"))
@@ -113,6 +125,7 @@ enum SelfTestRunner {
             expect(decodedSettings.historyLimit == 50, "old settings should preserve history limit")
             expect(decodedSettings.automaticUpdateChecksEnabled, "old settings should default automatic update checks on")
             expect(decodedSettings.enabledSources == Set([.ipifyDual, .ipwho]), "old settings should preserve enabled sources")
+            expect(decodedSettings.ignoredUpdateVersion == nil, "old settings should default ignored update version to nil")
         } else {
             expect(false, "old settings JSON should decode")
         }
@@ -146,6 +159,8 @@ enum SelfTestRunner {
             expect(release.isNewerThanCurrent, "release should be newer than current version")
             expect(release.assetName == "NetEnvCheck.app.zip", "release should select app zip asset")
             expect(release.version == "1.3.0", "release version should strip v prefix")
+            let downloaded = DownloadedUpdate(fileURL: URL(fileURLWithPath: "/tmp/NetEnvCheck.app.zip"), expectedSize: 2048, actualSize: 2048)
+            expect(downloaded.isSizeVerified, "downloaded update size should verify")
         } else {
             expect(false, "release JSON should decode")
         }

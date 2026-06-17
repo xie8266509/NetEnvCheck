@@ -7,7 +7,7 @@ APP_DIR="$ROOT_DIR/dist/$APP_NAME.app"
 CONTENTS_DIR="$APP_DIR/Contents"
 MACOS_DIR="$CONTENTS_DIR/MacOS"
 RESOURCES_DIR="$CONTENTS_DIR/Resources"
-VERSION="1.3.0"
+VERSION="1.6.0"
 
 cd "$ROOT_DIR"
 swift Scripts/generate-icon.swift "$ROOT_DIR" >/dev/null

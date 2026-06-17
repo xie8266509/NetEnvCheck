@@ -64,10 +64,30 @@ struct SettingsView: View {
                             .foregroundStyle(.red)
                     }
 
+                    if let ignoredUpdateVersion = appState.settings.ignoredUpdateVersion {
+                        Text("已忽略版本：\(ignoredUpdateVersion)")
+                            .font(.system(size: 12))
+                            .foregroundStyle(.secondary)
+                    }
+
+                    if let updateReminderAfter = appState.settings.updateReminderAfter {
+                        Text("稍后提醒：\(DateFormatter.settingsFormatter.string(from: updateReminderAfter))")
+                            .font(.system(size: 12))
+                            .foregroundStyle(.secondary)
+                    }
+
                     if let lastUpdateCheckAt = appState.settings.lastUpdateCheckAt {
                         Text("上次检查：\(DateFormatter.settingsFormatter.string(from: lastUpdateCheckAt))")
                             .font(.system(size: 12))
                             .foregroundStyle(.secondary)
+                    }
+
+                    if let downloadedUpdateURL = appState.downloadedUpdateURL {
+                        Text("已下载：\(downloadedUpdateURL.path)")
+                            .font(.system(size: 12))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                            .textSelection(.enabled)
                     }
 
                     HStack {
@@ -87,6 +107,21 @@ struct SettingsView: View {
 
                         Button("打开 Release") {
                             appState.openLatestReleasePage()
+                        }
+
+                        if appState.downloadedUpdateURL != nil {
+                            Button("在 Finder 中显示") {
+                                appState.revealDownloadedUpdate()
+                            }
+                        }
+
+                        if appState.settings.ignoredUpdateVersion != nil || appState.settings.updateReminderAfter != nil {
+                            Button("恢复提醒") {
+                                appState.updateSettings { settings in
+                                    settings.ignoredUpdateVersion = nil
+                                    settings.updateReminderAfter = nil
+                                }
+                            }
                         }
 
                         Spacer()
@@ -189,7 +224,7 @@ struct AboutView: View {
             Text("NetEnvCheck")
                 .font(.system(size: 22, weight: .semibold))
 
-            Text("Version 1.3.0")
+            Text("Version 1.6.0")
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
 

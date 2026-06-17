@@ -29,6 +29,9 @@ struct ContentView: View {
                         },
                         exportHTMLAction: {
                             appState.exportCurrentReport(as: .html)
+                        },
+                        exportOptimizationAction: {
+                            appState.exportCurrentReport(as: .optimization)
                         }
                     )
 
@@ -45,6 +48,9 @@ struct ContentView: View {
                         report: appState.report,
                         comparison: appState.comparison,
                         history: appState.history,
+                        retryAction: {
+                            Task { await appState.refresh() }
+                        },
                         restoreAction: appState.restore,
                         deleteAction: appState.deleteHistoryItem,
                         clearAction: appState.clearHistory
@@ -126,6 +132,7 @@ private struct AppHeader: View {
     var exportMarkdownAction: () -> Void
     var exportJSONAction: () -> Void
     var exportHTMLAction: () -> Void
+    var exportOptimizationAction: () -> Void
 
     var body: some View {
         HStack(alignment: .center, spacing: 18) {
@@ -163,6 +170,7 @@ private struct AppHeader: View {
                         Button("Markdown", action: exportMarkdownAction)
                         Button("JSON", action: exportJSONAction)
                         Button("HTML", action: exportHTMLAction)
+                        Button("优化报告", action: exportOptimizationAction)
                     } label: {
                         Label("导出", systemImage: "square.and.arrow.down")
                     }
@@ -582,6 +590,7 @@ private struct DetailTabsView: View {
     var report: CheckReport
     var comparison: ReportComparison?
     var history: [SavedReport]
+    var retryAction: () -> Void
     var restoreAction: (SavedReport) -> Void
     var deleteAction: (SavedReport) -> Void
     var clearAction: () -> Void
@@ -611,7 +620,7 @@ private struct DetailTabsView: View {
             case .risk:
                 RiskDetailView(report: report, comparison: comparison)
             case .sources:
-                SourceDetailView(report: report)
+                SourceDetailView(report: report, retryAction: retryAction)
             case .history:
                 HistoryDetailView(
                     comparison: comparison,
@@ -647,6 +656,9 @@ private struct EnvironmentDetailView: View {
             DetailRow(label: "代理识别", value: report.security.proxyText, state: report.security.isProxy == true || report.security.isVPN == true || report.security.isTor == true || report.security.isDatacenter == true ? .danger : .neutral)
             DetailRow(label: "WebRTC IP", value: report.webRTCDisplay, state: report.mismatchedWebRTCIPs.isEmpty ? .neutral : .danger)
             DetailRow(label: "DNS", value: report.dns.displayText, state: report.dnsLeakSignal ? .warning : .neutral)
+            DetailRow(label: "DNS 外显", value: report.dns.observedResolverDisplayText, state: .neutral)
+            DetailRow(label: "系统代理", value: report.systemProxy?.displayText ?? "--", state: report.systemProxySignal ? .warning : .neutral)
+            DetailRow(label: "网络接口", value: report.networkInterfaces?.displayText ?? "--", state: report.tunnelInterfaceSignal ? .warning : .neutral)
             DetailRow(label: "系统时区", value: report.timezoneDisplay, state: report.timezoneMismatch ? .warning : .neutral)
             DetailRow(label: "浏览器时区", value: report.browserTimezoneDisplay, state: report.browserTimezoneMismatch ? .warning : .neutral)
             DetailRow(label: "系统语言", value: report.languageDisplay, state: report.languageMismatch ? .warning : .neutral)
@@ -740,6 +752,7 @@ private struct RemediationCenterView: View {
     var refreshAction: () -> Void
     var markHandledAction: (RemediationPlan) -> Void
     var actionHandler: (RemediationAction) -> Void
+    @State private var expandedPlanIDs: Set<String> = []
 
     private var plans: [RemediationPlan] {
         report.remediationPlans
@@ -786,7 +799,15 @@ private struct RemediationCenterView: View {
                     ForEach(plans) { plan in
                         RemediationPlanRow(
                             plan: plan,
+                            isExpanded: expandedPlanIDs.contains(plan.id),
                             isHandled: handledPlanIDs.contains(plan.id),
+                            toggleExpandedAction: {
+                                if expandedPlanIDs.contains(plan.id) {
+                                    expandedPlanIDs.remove(plan.id)
+                                } else {
+                                    expandedPlanIDs.insert(plan.id)
+                                }
+                            },
                             markHandledAction: {
                                 markHandledAction(plan)
                             },
@@ -798,6 +819,11 @@ private struct RemediationCenterView: View {
                         }
                     }
                 }
+            }
+        }
+        .onAppear {
+            if expandedPlanIDs.isEmpty, let first = plans.first {
+                expandedPlanIDs.insert(first.id)
             }
         }
     }
@@ -898,7 +924,9 @@ private struct RemediationMetric: View {
 
 private struct RemediationPlanRow: View {
     var plan: RemediationPlan
+    var isExpanded: Bool
     var isHandled: Bool
+    var toggleExpandedAction: () -> Void
     var markHandledAction: () -> Void
     var actionHandler: (RemediationAction) -> Void
 
@@ -911,8 +939,17 @@ private struct RemediationPlanRow: View {
 
                 VStack(alignment: .leading, spacing: 7) {
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
-                        Text(plan.title)
-                            .font(.system(size: 14, weight: .semibold))
+                        Button {
+                            toggleExpandedAction()
+                        } label: {
+                            HStack(spacing: 6) {
+                                Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                                    .font(.system(size: 10, weight: .semibold))
+                                Text(plan.title)
+                                    .font(.system(size: 14, weight: .semibold))
+                            }
+                        }
+                        .buttonStyle(.plain)
 
                         if isHandled {
                             Label("已处理", systemImage: "checkmark.circle.fill")
@@ -926,10 +963,12 @@ private struct RemediationPlanRow: View {
                         .foregroundStyle(.primary)
                         .lineLimit(nil)
 
-                    Text(plan.whyItMatters)
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(nil)
+                    if isExpanded {
+                        Text(plan.whyItMatters)
+                            .font(.system(size: 12))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(nil)
+                    }
                 }
 
                 Spacer(minLength: 12)
@@ -952,41 +991,43 @@ private struct RemediationPlanRow: View {
                 RemediationTag(text: plan.safety.title, symbol: "lock.shield", color: safetyColor)
             }
 
-            VStack(alignment: .leading, spacing: 7) {
-                ForEach(Array(plan.steps.enumerated()), id: \.offset) { index, step in
-                    HStack(alignment: .firstTextBaseline, spacing: 8) {
-                        Text("\(index + 1)")
-                            .font(.system(size: 11, weight: .semibold, design: .rounded))
-                            .foregroundStyle(categoryColor)
-                            .frame(width: 20, height: 20)
-                            .background(
-                                Circle()
-                                    .fill(categoryColor.opacity(0.10))
-                            )
+            if isExpanded {
+                VStack(alignment: .leading, spacing: 7) {
+                    ForEach(Array(plan.steps.enumerated()), id: \.offset) { index, step in
+                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                            Text("\(index + 1)")
+                                .font(.system(size: 11, weight: .semibold, design: .rounded))
+                                .foregroundStyle(categoryColor)
+                                .frame(width: 20, height: 20)
+                                .background(
+                                    Circle()
+                                        .fill(categoryColor.opacity(0.10))
+                                )
 
-                        Text(step)
-                            .font(.system(size: 12))
-                            .foregroundStyle(.secondary)
-                            .lineLimit(nil)
-                    }
-                }
-            }
-
-            FlowLayout(spacing: 8, rowSpacing: 8) {
-                ForEach(plan.actions) { action in
-                    RemediationActionButton(action: action) {
-                        actionHandler(action)
+                            Text(step)
+                                .font(.system(size: 12))
+                                .foregroundStyle(.secondary)
+                                .lineLimit(nil)
+                        }
                     }
                 }
 
-                Button {
-                    markHandledAction()
-                } label: {
-                    Label("标记已处理", systemImage: "checkmark.circle")
+                FlowLayout(spacing: 8, rowSpacing: 8) {
+                    ForEach(plan.actions) { action in
+                        RemediationActionButton(action: action) {
+                            actionHandler(action)
+                        }
+                    }
+
+                    Button {
+                        markHandledAction()
+                    } label: {
+                        Label("标记已处理", systemImage: "checkmark.circle")
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .disabled(isHandled)
                 }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .disabled(isHandled)
             }
         }
         .padding(.vertical, 16)
@@ -1056,18 +1097,47 @@ private struct RemediationActionButton: View {
 
 private struct SourceDetailView: View {
     var report: CheckReport
+    var retryAction: () -> Void
+
+    private var retryableCount: Int {
+        report.sourceStatuses.filter { $0.state == .failure || $0.state == .warning }.count
+    }
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("数据源状态")
+                        .font(.system(size: 13, weight: .semibold))
+
+                    Text(retryableCount == 0 ? "所有启用的数据源状态正常" : "\(retryableCount) 个数据源需要关注")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer()
+
+                Button {
+                    retryAction()
+                } label: {
+                    Label("重试检测", systemImage: "arrow.clockwise")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .disabled(retryableCount == 0)
+            }
+
             if report.sourceStatuses.isEmpty {
                 DetailRow(label: "状态", value: "等待检测")
             } else {
-                ForEach(report.sourceStatuses) { status in
-                    DetailRow(
-                        label: status.source,
-                        value: status.errorMessage.map { "\(status.statusText) · \($0)" } ?? status.statusText,
-                        state: status.state == .failure ? .warning : .neutral
-                    )
+                VStack(spacing: 0) {
+                    ForEach(report.sourceStatuses) { status in
+                        DetailRow(
+                            label: status.source,
+                            value: status.displayErrorMessage.map { "\(status.statusText) · \($0)" } ?? status.statusText,
+                            state: status.state == .failure ? .warning : .neutral
+                        )
+                    }
                 }
             }
         }

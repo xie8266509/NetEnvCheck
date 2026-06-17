@@ -7,6 +7,7 @@ enum ReportExportFormat {
     case markdown
     case json
     case html
+    case optimization
 
     var title: String {
         switch self {
@@ -16,12 +17,14 @@ enum ReportExportFormat {
             "JSON"
         case .html:
             "HTML"
+        case .optimization:
+            "优化报告"
         }
     }
 
     var fileExtension: String {
         switch self {
-        case .markdown:
+        case .markdown, .optimization:
             "md"
         case .json:
             "json"
@@ -32,7 +35,7 @@ enum ReportExportFormat {
 
     var contentType: UTType {
         switch self {
-        case .markdown:
+        case .markdown, .optimization:
             UTType(filenameExtension: "md") ?? .plainText
         case .json:
             .json
@@ -63,6 +66,7 @@ final class AppState: ObservableObject {
     @Published var latestUpdate: UpdateRelease?
     @Published var updateErrorMessage: String?
     @Published var downloadedUpdateURL: URL?
+    @Published var downloadedUpdate: DownloadedUpdate?
     @Published var isCheckingForUpdates = false
     @Published var isDownloadingUpdate = false
     @Published var selectedPreset: RiskPreset = .balanced {
@@ -164,11 +168,11 @@ final class AppState: ObservableObject {
         report.browser = settings.isEnabled(.httpHeaders) ? payload.browser : BrowserEnvironment()
 
         if let error = payload.error, !error.isEmpty {
-            report.errors.append("WebRTC：\(error)")
+            report.errors.append("WebRTC：\(FriendlyErrorMessage.text(error, source: "WebRTC"))")
         }
 
         if let error = payload.browser.error, !error.isEmpty {
-            report.errors.append("浏览器环境：\(error)")
+            report.errors.append("浏览器环境：\(FriendlyErrorMessage.text(error, source: "浏览器环境"))")
         }
 
         webRTCPending = false
@@ -222,7 +226,7 @@ final class AppState: ObservableObject {
 
             if release.isNewerThanCurrent {
                 lastActionMessage = "发现新版本 \(release.tagName)"
-                if userInitiated || settings.automaticUpdateChecksEnabled {
+                if userInitiated || shouldPresentAutomaticUpdate(release) {
                     presentUpdateAvailableAlert(release)
                 }
             } else {
@@ -250,6 +254,33 @@ final class AppState: ObservableObject {
         }
     }
 
+    func ignoreUpdate(_ release: UpdateRelease) {
+        updateSettings { settings in
+            settings.ignoredUpdateVersion = release.tagName
+            settings.updateReminderAfter = nil
+        }
+        lastActionMessage = "已忽略 \(release.tagName)"
+    }
+
+    func remindUpdateLater(_ release: UpdateRelease) {
+        updateSettings { settings in
+            settings.updateReminderAfter = Date().addingTimeInterval(24 * 60 * 60)
+            if settings.ignoredUpdateVersion == release.tagName {
+                settings.ignoredUpdateVersion = nil
+            }
+        }
+        lastActionMessage = "明天再提醒"
+    }
+
+    func revealDownloadedUpdate() {
+        guard let downloadedUpdateURL else {
+            lastActionMessage = "暂无下载包"
+            return
+        }
+
+        NSWorkspace.shared.activateFileViewerSelecting([downloadedUpdateURL])
+    }
+
     func downloadLatestUpdate() async {
         if let latestUpdate {
             await downloadUpdate(latestUpdate)
@@ -273,11 +304,12 @@ final class AppState: ObservableObject {
         }
 
         do {
-            let url = try await UpdateChecker.downloadAppZip(from: release)
-            downloadedUpdateURL = url
+            let downloaded = try await UpdateChecker.downloadAppZip(from: release)
+            downloadedUpdate = downloaded
+            downloadedUpdateURL = downloaded.fileURL
             lastActionMessage = "更新包已下载"
-            NSWorkspace.shared.activateFileViewerSelecting([url])
-            presentUpdateDownloadedAlert(url: url)
+            NSWorkspace.shared.activateFileViewerSelecting([downloaded.fileURL])
+            presentUpdateDownloadedAlert(downloaded)
         } catch {
             lastActionMessage = "下载更新失败"
             presentUpdateErrorAlert(error.localizedDescription)
@@ -307,6 +339,8 @@ final class AppState: ObservableObject {
                 data = try encoder.encode(report)
             case .html:
                 data = Data(report.htmlReport().utf8)
+            case .optimization:
+                data = Data(report.optimizationReport(comparison: comparison).utf8)
             }
 
             try data.write(to: url, options: .atomic)
@@ -416,6 +450,20 @@ final class AppState: ObservableObject {
         settingsStore.save(settings)
     }
 
+    private func shouldPresentAutomaticUpdate(_ release: UpdateRelease) -> Bool {
+        guard settings.automaticUpdateChecksEnabled else { return false }
+
+        if settings.ignoredUpdateVersion == release.tagName {
+            return false
+        }
+
+        if let reminder = settings.updateReminderAfter, reminder > Date() {
+            return false
+        }
+
+        return true
+    }
+
     private func presentUpdateAvailableAlert(_ release: UpdateRelease) {
         let alert = NSAlert()
         alert.messageText = "发现新版本 \(release.tagName)"
@@ -423,6 +471,8 @@ final class AppState: ObservableObject {
         alert.alertStyle = .informational
         alert.addButton(withTitle: "下载更新")
         alert.addButton(withTitle: "打开 Release")
+        alert.addButton(withTitle: "明天提醒")
+        alert.addButton(withTitle: "忽略此版本")
         alert.addButton(withTitle: "稍后")
 
         let response = alert.runModal()
@@ -432,6 +482,10 @@ final class AppState: ObservableObject {
             }
         } else if response == .alertSecondButtonReturn {
             NSWorkspace.shared.open(release.htmlURL)
+        } else if response == .alertThirdButtonReturn {
+            remindUpdateLater(release)
+        } else if response.rawValue == NSApplication.ModalResponse.alertThirdButtonReturn.rawValue + 1 {
+            ignoreUpdate(release)
         }
     }
 
@@ -444,10 +498,19 @@ final class AppState: ObservableObject {
         alert.runModal()
     }
 
-    private func presentUpdateDownloadedAlert(url: URL) {
+    private func presentUpdateDownloadedAlert(_ downloaded: DownloadedUpdate) {
         let alert = NSAlert()
         alert.messageText = "更新包已下载"
-        alert.informativeText = "已下载到：\(url.path)\n\n请退出 NetEnvCheck，解压后将新版 App 拖入 Applications。"
+        alert.informativeText = """
+        已下载到：\(downloaded.fileURL.path)
+        文件大小：\(downloaded.actualSizeText)
+
+        安装步骤：
+        1. 退出 NetEnvCheck。
+        2. 解压下载的 NetEnvCheck.app.zip。
+        3. 将新版 NetEnvCheck.app 拖入 Applications 并替换旧版。
+        4. 重新打开 App。
+        """
         alert.alertStyle = .informational
         alert.addButton(withTitle: "好")
         alert.runModal()
@@ -456,7 +519,7 @@ final class AppState: ObservableObject {
     private func presentUpdateErrorAlert(_ message: String) {
         let alert = NSAlert()
         alert.messageText = "更新检查失败"
-        alert.informativeText = message
+        alert.informativeText = "\(message)\n\n可以稍后重试，或直接打开 GitHub Releases 页面下载。"
         alert.alertStyle = .warning
         alert.addButton(withTitle: "好")
         alert.runModal()

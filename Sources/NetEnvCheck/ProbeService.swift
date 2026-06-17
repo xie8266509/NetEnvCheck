@@ -49,8 +49,10 @@ struct ProbeService: Sendable {
             ? DNSResolverProbe().run()
             : DNSResolverProbeResult(
                 info: DNSResolverInfo(),
-                status: SourceStatus(source: "local DNS", url: "scutil --dns", state: .disabled, durationMS: 0, errorMessage: nil)
+                statuses: [SourceStatus(source: "local DNS", url: "scutil --dns", state: .disabled, durationMS: 0, errorMessage: nil)]
             )
+        async let proxyResult = SystemProxyProbe().run()
+        async let interfaceResult = NetworkInterfaceProbe().run()
 
         let ipifyDual = await ipifyDualResult
         let ipifyIPv4 = await ipifyIPv4Result
@@ -59,6 +61,8 @@ struct ProbeService: Sendable {
         let ipapiIs = await ipapiIsResult
         let ifconfig = await ifconfigResult
         let dns = await dnsResult
+        let proxy = await proxyResult
+        let interfaces = await interfaceResult
 
         [
             ipifyDual.status,
@@ -66,9 +70,11 @@ struct ProbeService: Sendable {
             ipifyIPv6.status,
             ipwho.status,
             ipapiIs.status,
-            ifconfig.status,
-            dns.status
+            ifconfig.status
         ].forEach { report.sourceStatuses.append($0) }
+        dns.statuses.forEach { report.sourceStatuses.append($0) }
+        report.sourceStatuses.append(proxy.status)
+        report.sourceStatuses.append(interfaces.status)
 
         switch ipifyDual.result {
         case let .success(response):
@@ -133,8 +139,10 @@ struct ProbeService: Sendable {
 
         report.dns = dns.info
         if let error = dns.info.error, !error.isEmpty {
-            report.errors.append("DNS：\(error)")
+            report.errors.append("DNS：\(FriendlyErrorMessage.text(error, source: "DNS"))")
         }
+        report.systemProxy = proxy.info
+        report.networkInterfaces = interfaces.snapshot
 
         await applyCommercialIntel(to: &report, settings: settings, token: ipinfoToken)
 
@@ -188,7 +196,7 @@ struct ProbeService: Sendable {
 
     private func appendError(_ error: Error, from status: SourceStatus, to report: inout CheckReport) {
         guard status.state != .disabled else { return }
-        report.errors.append("\(status.source)：\(error.localizedDescription)")
+        report.errors.append("\(status.source)：\(FriendlyErrorMessage.text(error.localizedDescription, source: status.source))")
     }
 
     private func captureSource<T: Decodable & Sendable>(
@@ -336,15 +344,27 @@ private struct DNSResolverProbe: Sendable {
 
         do {
             let output = try runScutilDNS()
-            let info = parse(output)
-            let status = SourceStatus(
+            var info = parse(output)
+            let localStatus = SourceStatus(
                 source: "local DNS",
                 url: "scutil --dns",
                 state: info.nameservers.isEmpty ? .warning : .success,
                 durationMS: durationMS(since: startedAt),
-                errorMessage: info.nameservers.isEmpty ? "未读取到 nameserver" : nil
+                errorMessage: info.nameservers.isEmpty ? "未读取到 DNS 服务器" : nil
             )
-            return DNSResolverProbeResult(info: info, status: status)
+
+            let leakStartedAt = Date()
+            let leakResult = try? runDNSLeakProbe()
+            info.observedResolverIPs = leakResult
+            let leakStatus = SourceStatus(
+                source: "DNS leak probe",
+                url: "dig TXT o-o.myaddr.l.google.com",
+                state: (leakResult?.isEmpty ?? true) ? .warning : .success,
+                durationMS: durationMS(since: leakStartedAt),
+                errorMessage: (leakResult?.isEmpty ?? true) ? "未读取到外显解析器" : nil
+            )
+
+            return DNSResolverProbeResult(info: info, statuses: [localStatus, leakStatus])
         } catch {
             let info = DNSResolverInfo(error: error.localizedDescription)
             let status = SourceStatus(
@@ -354,7 +374,7 @@ private struct DNSResolverProbe: Sendable {
                 durationMS: durationMS(since: startedAt),
                 errorMessage: error.localizedDescription
             )
-            return DNSResolverProbeResult(info: info, status: status)
+            return DNSResolverProbeResult(info: info, statuses: [status])
         }
     }
 
@@ -380,6 +400,23 @@ private struct DNSResolverProbe: Sendable {
         }
 
         return String(data: data, encoding: .utf8) ?? ""
+    }
+
+    private func runDNSLeakProbe() throws -> [String] {
+        guard FileManager.default.fileExists(atPath: "/usr/bin/dig") else {
+            return []
+        }
+
+        let output = try CommandRunner.run(
+            executablePath: "/usr/bin/dig",
+            arguments: ["+time=3", "+tries=1", "+short", "TXT", "o-o.myaddr.l.google.com"]
+        )
+
+        let regex = try NSRegularExpression(pattern: #"(?:(?:\d{1,3}\.){3}\d{1,3})"#)
+        let range = NSRange(output.startIndex..<output.endIndex, in: output)
+        return CheckReport.unique(regex.matches(in: output, range: range).compactMap { match in
+            Range(match.range, in: output).map { String(output[$0]) }
+        })
     }
 
     private func parse(_ output: String) -> DNSResolverInfo {
@@ -419,7 +456,154 @@ private struct DNSResolverProbe: Sendable {
 
 private struct DNSResolverProbeResult: Sendable {
     var info: DNSResolverInfo
+    var statuses: [SourceStatus]
+}
+
+private struct SystemProxyProbeResult: Sendable {
+    var info: SystemProxyInfo
     var status: SourceStatus
+}
+
+private struct SystemProxyProbe: Sendable {
+    func run() async -> SystemProxyProbeResult {
+        let startedAt = Date()
+
+        do {
+            let output = try CommandRunner.run(executablePath: "/usr/sbin/scutil", arguments: ["--proxy"])
+            let info = parse(output)
+            return SystemProxyProbeResult(
+                info: info,
+                status: SourceStatus(
+                    source: "system proxy",
+                    url: "scutil --proxy",
+                    state: .success,
+                    durationMS: durationMS(since: startedAt),
+                    errorMessage: nil
+                )
+            )
+        } catch {
+            return SystemProxyProbeResult(
+                info: SystemProxyInfo(),
+                status: SourceStatus(
+                    source: "system proxy",
+                    url: "scutil --proxy",
+                    state: .warning,
+                    durationMS: durationMS(since: startedAt),
+                    errorMessage: error.localizedDescription
+                )
+            )
+        }
+    }
+
+    private func parse(_ output: String) -> SystemProxyInfo {
+        var info = SystemProxyInfo()
+        info.httpEnabled = output.contains("HTTPEnable : 1")
+        info.httpsEnabled = output.contains("HTTPSEnable : 1")
+        info.socksEnabled = output.contains("SOCKSEnable : 1")
+        info.pacEnabled = output.contains("ProxyAutoConfigEnable : 1")
+        info.proxyAutoDiscoveryEnabled = output.contains("ProxyAutoDiscoveryEnable : 1")
+        return info
+    }
+
+    private func durationMS(since startedAt: Date) -> Int {
+        max(0, Int(Date().timeIntervalSince(startedAt) * 1000))
+    }
+}
+
+private struct NetworkInterfaceProbeResult: Sendable {
+    var snapshot: NetworkInterfaceSnapshot
+    var status: SourceStatus
+}
+
+private struct NetworkInterfaceProbe: Sendable {
+    func run() async -> NetworkInterfaceProbeResult {
+        let startedAt = Date()
+
+        do {
+            let output = try CommandRunner.run(executablePath: "/sbin/ifconfig", arguments: [])
+            let snapshot = parse(output)
+            return NetworkInterfaceProbeResult(
+                snapshot: snapshot,
+                status: SourceStatus(
+                    source: "network interfaces",
+                    url: "ifconfig",
+                    state: .success,
+                    durationMS: durationMS(since: startedAt),
+                    errorMessage: nil
+                )
+            )
+        } catch {
+            return NetworkInterfaceProbeResult(
+                snapshot: NetworkInterfaceSnapshot(),
+                status: SourceStatus(
+                    source: "network interfaces",
+                    url: "ifconfig",
+                    state: .warning,
+                    durationMS: durationMS(since: startedAt),
+                    errorMessage: error.localizedDescription
+                )
+            )
+        }
+    }
+
+    private func parse(_ output: String) -> NetworkInterfaceSnapshot {
+        let blocks = output.components(separatedBy: "\n\n")
+        var active: [String] = []
+        var tunnels: [String] = []
+
+        for block in blocks {
+            guard let firstLine = block.split(separator: "\n").first else { continue }
+            let name = firstLine.split(separator: ":").first.map(String.init) ?? ""
+            guard !name.isEmpty else { continue }
+
+            let isActive = block.contains("status: active") || block.contains("UP,")
+            let isTunnel = name.hasPrefix("utun") || name.hasPrefix("tun") || name.hasPrefix("tap") || name.hasPrefix("ppp") || name.hasPrefix("wg") || name.hasPrefix("ipsec")
+
+            if isActive {
+                active.append(name)
+            }
+
+            if isTunnel && isActive {
+                tunnels.append(name)
+            }
+        }
+
+        return NetworkInterfaceSnapshot(
+            activeInterfaces: CheckReport.unique(active).sorted(),
+            tunnelInterfaces: CheckReport.unique(tunnels).sorted()
+        )
+    }
+
+    private func durationMS(since startedAt: Date) -> Int {
+        max(0, Int(Date().timeIntervalSince(startedAt) * 1000))
+    }
+}
+
+private enum CommandRunner {
+    static func run(executablePath: String, arguments: [String]) throws -> String {
+        let process = Process()
+        let pipe = Pipe()
+        let errorPipe = Pipe()
+
+        process.executableURL = URL(fileURLWithPath: executablePath)
+        process.arguments = arguments
+        process.standardOutput = pipe
+        process.standardError = errorPipe
+
+        try process.run()
+        process.waitUntilExit()
+
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
+
+        guard process.terminationStatus == 0 else {
+            let command = ([executablePath] + arguments).joined(separator: " ")
+            let message = String(data: errorData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
+            throw ProbeError.commandFailed(command, message ?? "exit \(process.terminationStatus)")
+        }
+
+        return String(data: data, encoding: .utf8) ?? ""
+    }
 }
 
 private struct CommercialIntelConfig: Decodable, Sendable {

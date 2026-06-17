@@ -220,6 +220,62 @@ enum RemediationEngine {
 
         append(
             RemediationPlan(
+                id: "system-proxy",
+                title: "核对系统代理配置",
+                summary: "系统代理处于启用状态，需要确认代理协议、DNS 和浏览器出口是否一致。",
+                whyItMatters: "系统代理、浏览器代理和 DNS 如果没有走同一条链路，会形成混合环境信号。",
+                category: .network,
+                difficulty: .medium,
+                safety: .manual,
+                estimatedScoreGain: gain(["system-proxy"]),
+                relatedImpactIDs: ["system-proxy"],
+                steps: [
+                    "打开网络设置，确认当前代理是否为你预期使用的代理。",
+                    "运行 scutil --proxy 查看 HTTP、HTTPS、SOCKS、PAC 等代理状态。",
+                    "如果不需要系统代理，关闭后重新检测；如果需要，确保 DNS 与浏览器也走同一出口。"
+                ],
+                actions: [
+                    .copyCommand(
+                        id: "copy-system-proxy-status",
+                        title: "复制代理状态命令",
+                        command: "scutil --proxy"
+                    ),
+                    .openNetwork,
+                    .refresh
+                ]
+            )
+        )
+
+        append(
+            RemediationPlan(
+                id: "tunnel-interface",
+                title: "确认 VPN/隧道接口",
+                summary: "检测到 VPN 或隧道网络接口，需要确认是否符合预期。",
+                whyItMatters: "多层 VPN、隧道或代理叠加时，出口 IP、DNS、WebRTC 和时区语言更容易出现冲突。",
+                category: .network,
+                difficulty: .medium,
+                safety: .manual,
+                estimatedScoreGain: gain(["tunnel-interface"]),
+                relatedImpactIDs: ["tunnel-interface"],
+                steps: [
+                    "确认当前是否正在使用 VPN、WireGuard、Tailscale、Clash/TUN 或类似隧道。",
+                    "不需要时先关闭对应客户端，再重新检测。",
+                    "需要时尽量避免多层网络叠加，并确认 DNS、WebRTC、浏览器时区与出口一致。"
+                ],
+                actions: [
+                    .copyCommand(
+                        id: "copy-interface-status",
+                        title: "复制接口检查命令",
+                        command: "ifconfig | grep -E '^[a-z0-9]+:|status: active|utun|tun|tap|ppp|wg'"
+                    ),
+                    .openVPN,
+                    .refresh
+                ]
+            )
+        )
+
+        append(
+            RemediationPlan(
                 id: "abuse",
                 title: "避开存在滥用记录的出口",
                 summary: "当前 IP 命中过近期或历史滥用信号。",

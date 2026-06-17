@@ -186,6 +186,47 @@ struct SourceStatus: Identifiable, Codable, Hashable, Sendable {
             "已关闭"
         }
     }
+
+    var displayErrorMessage: String? {
+        errorMessage.map { FriendlyErrorMessage.text($0, source: source) }
+    }
+}
+
+enum FriendlyErrorMessage {
+    static func text(_ message: String, source: String? = nil) -> String {
+        let lowercased = message.lowercased()
+        let sourceText = source?.lowercased() ?? ""
+
+        if sourceText.contains("ipv6") || lowercased.contains("network is unreachable") || lowercased.contains("no route to host") {
+            return "当前网络可能不支持 IPv6，或 IPv6 没有可用出口。"
+        }
+
+        if lowercased.contains("tls") || lowercased.contains("secure connection") || lowercased.contains("ssl") {
+            return "安全连接建立失败，可能是临时网络、证书链或代理拦截导致。"
+        }
+
+        if lowercased.contains("timed out") || lowercased.contains("timeout") || lowercased.contains("请求超时") {
+            return "数据源响应超时，建议稍后重试或增加网络超时时间。"
+        }
+
+        if lowercased.contains("load failed") || lowercased.contains("failed to load") || lowercased.contains("could not connect") {
+            return "请求加载失败，可能是临时网络波动或 WebView 请求被拦截。"
+        }
+
+        if lowercased.contains("cancelled") || lowercased.contains("canceled") {
+            return "请求已取消，可重新检测。"
+        }
+
+        if lowercased.contains("http 429") {
+            return "数据源请求过于频繁，被临时限流。请稍后再试。"
+        }
+
+        if lowercased.contains("http 5") {
+            return "数据源服务端暂时异常，请稍后重试。"
+        }
+
+        return message
+    }
 }
 
 struct SourceObservation: Identifiable, Hashable, Codable, Sendable {
@@ -390,6 +431,7 @@ struct WebRTCProbePayload: Sendable {
 struct DNSResolverInfo: Codable, Equatable, Sendable {
     var nameservers: [String] = []
     var searchDomains: [String] = []
+    var observedResolverIPs: [String]? = nil
     var error: String?
 
     var publicResolvers: [String] {
@@ -411,6 +453,60 @@ struct DNSResolverInfo: Codable, Equatable, Sendable {
 
         return nameservers.joined(separator: ", ")
     }
+
+    var observedResolverDisplayText: String {
+        guard let observedResolverIPs, !observedResolverIPs.isEmpty else {
+            return "未读取到外显解析器"
+        }
+
+        return observedResolverIPs.joined(separator: ", ")
+    }
+}
+
+struct SystemProxyInfo: Codable, Equatable, Sendable {
+    var httpEnabled = false
+    var httpsEnabled = false
+    var socksEnabled = false
+    var pacEnabled = false
+    var proxyAutoDiscoveryEnabled = false
+
+    var hasProxySignal: Bool {
+        httpEnabled || httpsEnabled || socksEnabled || pacEnabled || proxyAutoDiscoveryEnabled
+    }
+
+    var displayText: String {
+        var enabled: [String] = []
+        if httpEnabled { enabled.append("HTTP") }
+        if httpsEnabled { enabled.append("HTTPS") }
+        if socksEnabled { enabled.append("SOCKS") }
+        if pacEnabled { enabled.append("PAC") }
+        if proxyAutoDiscoveryEnabled { enabled.append("WPAD") }
+        return enabled.isEmpty ? "未启用系统代理" : enabled.joined(separator: " / ")
+    }
+}
+
+struct NetworkInterfaceSnapshot: Codable, Equatable, Sendable {
+    var activeInterfaces: [String] = []
+    var tunnelInterfaces: [String] = []
+
+    var hasTunnelSignal: Bool {
+        !tunnelInterfaces.isEmpty
+    }
+
+    var displayText: String {
+        if activeInterfaces.isEmpty && tunnelInterfaces.isEmpty {
+            return "未读取到活跃接口"
+        }
+
+        var parts: [String] = []
+        if !activeInterfaces.isEmpty {
+            parts.append("活跃：\(activeInterfaces.joined(separator: ", "))")
+        }
+        if !tunnelInterfaces.isEmpty {
+            parts.append("隧道/VPN：\(tunnelInterfaces.joined(separator: ", "))")
+        }
+        return parts.joined(separator: "；")
+    }
 }
 
 struct CheckReport: Codable, Sendable {
@@ -425,6 +521,8 @@ struct CheckReport: Codable, Sendable {
     var webRTCCandidates: [WebRTCCandidate] = []
     var browser = BrowserEnvironment()
     var dns = DNSResolverInfo()
+    var systemProxy: SystemProxyInfo?
+    var networkInterfaces: NetworkInterfaceSnapshot?
     var errors: [String] = []
     var localTimezone = TimeZone.current.identifier
     var preferredLanguage = Locale.preferredLanguages.first ?? Locale.current.identifier
@@ -566,6 +664,14 @@ struct CheckReport: Codable, Sendable {
         return publicResolvers.contains { wellKnownResolvers.contains($0) }
     }
 
+    var systemProxySignal: Bool {
+        systemProxy?.hasProxySignal == true
+    }
+
+    var tunnelInterfaceSignal: Bool {
+        networkInterfaces?.hasTunnelSignal == true
+    }
+
     var scoreResult: RiskScoreResult {
         RiskScoreEngine.result(for: self, preset: scoringPreset)
     }
@@ -700,7 +806,7 @@ struct CheckReport: Codable, Sendable {
 
     var httpHeaderDisplay: String {
         if let error = browser.error, !error.isEmpty {
-            return "读取失败：\(error)"
+            return "读取失败：\(FriendlyErrorMessage.text(error, source: "浏览器环境"))"
         }
 
         if let acceptLanguage = browser.acceptLanguage, !acceptLanguage.isEmpty {
@@ -743,6 +849,14 @@ struct CheckReport: Codable, Sendable {
 
         if dnsLeakSignal {
             issues.append("DNS 使用公共解析器，可能与出口环境不一致")
+        }
+
+        if systemProxySignal {
+            issues.append("系统代理处于启用状态")
+        }
+
+        if tunnelInterfaceSignal {
+            issues.append("检测到 VPN/隧道网络接口")
         }
 
         if timezoneMismatch {
@@ -791,6 +905,14 @@ struct CheckReport: Codable, Sendable {
             tips.append("DNS 使用公共解析器时，建议让 DNS 与代理出口保持一致，或使用代理工具提供的 DNS。")
         }
 
+        if systemProxySignal {
+            tips.append("系统代理启用时，建议确认代理协议、DNS 与浏览器出口是否一致。")
+        }
+
+        if tunnelInterfaceSignal {
+            tips.append("检测到 VPN/隧道接口时，建议确认是否符合预期，并避免多层网络叠加。")
+        }
+
         if timezoneMismatch || browserTimezoneMismatch {
             tips.append("将系统/浏览器时区调整为与出口 IP 归属地一致。")
         }
@@ -816,6 +938,59 @@ struct CheckReport: Codable, Sendable {
 
     func remediationGuide() -> String {
         RemediationEngine.guide(for: self)
+    }
+
+    func optimizationReport(comparison: ReportComparison? = nil) -> String {
+        let comparisonText: String
+        if let comparison {
+            let delta = riskScore - comparison.previous.riskScore
+            let deltaText = delta > 0 ? "+\(delta)" : "\(delta)"
+            comparisonText = """
+            ## 优化前后对比
+
+            - 评分变化：\(comparison.previous.riskScore) → \(riskScore)（\(deltaText)）
+            - 风险等级：\(comparison.previous.riskBand.title) → \(riskBand.title)
+            - 出口 IP：\(comparison.previous.publicIP ?? "--") → \(publicIP ?? "--")
+            """
+        } else {
+            comparisonText = "## 优化前后对比\n\n暂无复测对比。处理建议后重新检测即可生成变化记录。"
+        }
+
+        return """
+        # NetEnvCheck 环境优化报告
+
+        - 时间：\(DateFormatter.reportFormatter.string(from: generatedAt))
+        - 当前评分：\(riskScore) / 100
+        - 当前风险：\(riskBand.title)
+        - 出口 IP：\(publicIP ?? "--")
+        - 归属地：\(locationDisplay)
+        - ASN：\(asnDisplay)
+
+        ## 当前关键风险
+
+        \(issueSummary.isEmpty ? "未发现明显异常。" : issueSummary.map { "- \($0)" }.joined(separator: "\n"))
+
+        ## 修复优先级
+
+        \(remediationPlans.isEmpty ? "暂无需要处理的修复项。" : remediationPlans.map { plan in
+        """
+        ### \(plan.title)
+        - 预计改善：+\(plan.estimatedScoreGain)
+        - 难度：\(plan.difficulty.title)
+        - 安全级别：\(plan.safety.title)
+        - 原因：\(plan.summary)
+        - 影响：\(plan.whyItMatters)
+        - 步骤：
+        \(plan.steps.enumerated().map { "  \($0.offset + 1). \($0.element)" }.joined(separator: "\n"))
+        """
+        }.joined(separator: "\n\n"))
+
+        \(comparisonText)
+
+        ## 安全边界
+
+        NetEnvCheck 只会打开系统设置、复制命令、复制指南和重新检测。涉及 DNS、IPv6、代理、VPN、时区等系统配置的操作需要用户手动确认。
+        """
     }
 
     func plainTextReport() -> String {
@@ -846,6 +1021,9 @@ struct CheckReport: Codable, Sendable {
         系统语言：\(languageDisplay)
         浏览器语言：\(browserLanguageDisplay)
         HTTP 头：\(httpHeaderDisplay)
+        DNS 外显解析器：\(dns.observedResolverDisplayText)
+        系统代理：\(systemProxy?.displayText ?? "--")
+        网络接口：\(networkInterfaces?.displayText ?? "--")
 
         扣分明细：
         \(scoreBreakdown.isEmpty ? "无扣分项" : scoreBreakdown.map { "- \($0.title)：\($0.points)（\($0.detail)）" }.joined(separator: "\n"))
@@ -857,7 +1035,7 @@ struct CheckReport: Codable, Sendable {
         \(remediationTips.isEmpty ? "暂无建议" : remediationTips.map { "- \($0)" }.joined(separator: "\n"))
 
         数据源状态：
-        \(sourceStatuses.isEmpty ? "无数据源状态" : sourceStatuses.map { "- \($0.source)：\($0.statusText)\($0.errorMessage.map { "，\($0)" } ?? "")" }.joined(separator: "\n"))
+        \(sourceStatuses.isEmpty ? "无数据源状态" : sourceStatuses.map { "- \($0.source)：\($0.statusText)\($0.displayErrorMessage.map { "，\($0)" } ?? "")" }.joined(separator: "\n"))
 
         备注：检测结果仅供参考，不保证与 Claude 官方判定一致。
         """
@@ -890,6 +1068,9 @@ struct CheckReport: Codable, Sendable {
         | 系统语言 | \(languageDisplay) |
         | 浏览器语言 | \(browserLanguageDisplay) |
         | HTTP 头 | \(httpHeaderDisplay) |
+        | DNS 外显解析器 | \(dns.observedResolverDisplayText) |
+        | 系统代理 | \(systemProxy?.displayText ?? "--") |
+        | 网络接口 | \(networkInterfaces?.displayText ?? "--") |
 
         ## 扣分明细
 
@@ -905,7 +1086,7 @@ struct CheckReport: Codable, Sendable {
 
         ## 数据源状态
 
-        \(sourceStatuses.isEmpty ? "无数据源状态" : sourceStatuses.map { "- \($0.source)：\($0.statusText)\($0.errorMessage.map { "；\($0)" } ?? "")" }.joined(separator: "\n"))
+        \(sourceStatuses.isEmpty ? "无数据源状态" : sourceStatuses.map { "- \($0.source)：\($0.statusText)\($0.displayErrorMessage.map { "；\($0)" } ?? "")" }.joined(separator: "\n"))
 
         > 检测结果仅供参考，不保证与 Claude 官方判定一致。
         """
@@ -925,7 +1106,10 @@ struct CheckReport: Codable, Sendable {
             ("浏览器时区", browserTimezoneDisplay),
             ("系统语言", languageDisplay),
             ("浏览器语言", browserLanguageDisplay),
-            ("HTTP 头", httpHeaderDisplay)
+            ("HTTP 头", httpHeaderDisplay),
+            ("DNS 外显解析器", dns.observedResolverDisplayText),
+            ("系统代理", systemProxy?.displayText ?? "--"),
+            ("网络接口", networkInterfaces?.displayText ?? "--")
         ]
 
         let issueHTML = issueSummary.isEmpty
@@ -939,7 +1123,7 @@ struct CheckReport: Codable, Sendable {
         let sourceHTML = sourceStatuses.isEmpty
             ? "<li>无数据源状态</li>"
             : sourceStatuses.map { status in
-                "<li><strong>\(Self.escapeHTML(status.source))</strong>：\(Self.escapeHTML(status.statusText))\(status.errorMessage.map { "；\(Self.escapeHTML($0))" } ?? "")</li>"
+                "<li><strong>\(Self.escapeHTML(status.source))</strong>：\(Self.escapeHTML(status.statusText))\(status.displayErrorMessage.map { "；\(Self.escapeHTML($0))" } ?? "")</li>"
             }.joined()
 
         let tipsHTML = remediationTips.isEmpty
@@ -1063,6 +1247,14 @@ enum RiskScoreEngine {
 
         if report.dnsLeakSignal {
             add("dns", "DNS 公共解析器", "系统 DNS 使用常见公共解析器，可能形成环境不一致信号", basePenalty: 8)
+        }
+
+        if report.systemProxySignal {
+            add("system-proxy", "系统代理启用", "系统代理处于启用状态，需确认是否与浏览器和 DNS 出口一致", basePenalty: 8)
+        }
+
+        if report.tunnelInterfaceSignal {
+            add("tunnel-interface", "VPN/隧道接口", "检测到 VPN 或隧道网络接口，需确认是否为预期网络链路", basePenalty: 8)
         }
 
         if report.timezoneMismatch {
