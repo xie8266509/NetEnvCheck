@@ -1,5 +1,5 @@
 # NetEnvCheck
-
+Claude网络环境风险检测小工具，本地 macOS 原生工具。
 一个本地 macOS 原生网络环境风险检测小工具，用 SwiftUI + AppKit + WKWebView 编写。
 
 GitHub: https://github.com/xie8266509/NetEnvCheck
