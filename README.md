@@ -162,6 +162,10 @@ IPINFO_TOKEN="your-token" swift run NetEnvCheck
 
 在 App 中也可以通过“设置”窗口保存 IPinfo Token。设置页保存时会优先写入 macOS Keychain。
 
+## 致谢
+
+感谢 [linux.do](https://linux.do/) 社区的讨论、反馈和支持。
+
 ## License
 
 MIT License. See [LICENSE](LICENSE).
