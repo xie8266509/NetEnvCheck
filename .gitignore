@@ -1,0 +1,20 @@
+.DS_Store
+.build/
+dist/
+.swiftpm/
+Package.resolved
+
+# Xcode / SwiftPM editor state
+*.xcuserstate
+*.xcworkspace/xcuserdata/
+*.xcodeproj/xcuserdata/
+xcuserdata/
+
+# macOS app build outputs
+*.app
+*.app.zip
+*.dSYM/
+
+# Local logs and temporary exports
+*.log
+tmp/
