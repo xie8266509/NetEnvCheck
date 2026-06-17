@@ -161,3 +161,7 @@ IPINFO_TOKEN="your-token" swift run NetEnvCheck
 配置后，检测结果会额外出现 `IPinfo Core` 数据源，并补充地理、ASN、hosting、proxy、VPN、Tor、mobile 等网络标记。
 
 在 App 中也可以通过“设置”窗口保存 IPinfo Token。设置页保存时会优先写入 macOS Keychain。
+
+## License
+
+MIT License. See [LICENSE](LICENSE).
