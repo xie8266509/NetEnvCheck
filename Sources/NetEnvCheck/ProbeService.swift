@@ -9,60 +9,93 @@ struct ProbeService: Sendable {
         var report = CheckReport()
         report.scoringPreset = preset
 
-        async let ipifyDualResult = settings.isEnabled(.ipifyDual)
-            ? captureSource(source: "ipify dual", sourceID: .ipifyDual, url: "https://api64.ipify.org?format=json", settings: settings) {
-                try await fetchJSON(IpifyResponse.self, from: "https://api64.ipify.org?format=json", settings: settings)
-            }
-            : disabledSource(IpifyResponse.self, source: "ipify dual", sourceID: .ipifyDual, url: "https://api64.ipify.org?format=json")
+        // Explicit task handles avoid the async-let cleanup failure:
+        // "freed pointer was not the last allocation". All probes still start
+        // concurrently, and every nonthrowing task is awaited below.
+        let ipifyDualResult = Task {
+            settings.isEnabled(.ipifyDual)
+                ? await captureSource(source: "ipify dual", sourceID: .ipifyDual, url: "https://api64.ipify.org?format=json", settings: settings) {
+                    try await fetchJSON(IpifyResponse.self, from: "https://api64.ipify.org?format=json", settings: settings)
+                }
+                : disabledSource(IpifyResponse.self, source: "ipify dual", sourceID: .ipifyDual, url: "https://api64.ipify.org?format=json")
+        }
 
-        async let ipifyIPv4Result = settings.isEnabled(.ipifyIPv4)
-            ? captureSource(source: "ipify IPv4", sourceID: .ipifyIPv4, url: "https://api.ipify.org?format=json", settings: settings) {
-                try await fetchJSON(IpifyResponse.self, from: "https://api.ipify.org?format=json", settings: settings)
-            }
-            : disabledSource(IpifyResponse.self, source: "ipify IPv4", sourceID: .ipifyIPv4, url: "https://api.ipify.org?format=json")
+        let ipifyIPv4Result = Task {
+            settings.isEnabled(.ipifyIPv4)
+                ? await captureSource(source: "ipify IPv4", sourceID: .ipifyIPv4, url: "https://api.ipify.org?format=json", settings: settings) {
+                    try await fetchJSON(IpifyResponse.self, from: "https://api.ipify.org?format=json", settings: settings)
+                }
+                : disabledSource(IpifyResponse.self, source: "ipify IPv4", sourceID: .ipifyIPv4, url: "https://api.ipify.org?format=json")
+        }
 
-        async let ipifyIPv6Result = settings.isEnabled(.ipifyIPv6)
-            ? captureSource(source: "ipify IPv6", sourceID: .ipifyIPv6, url: "https://api6.ipify.org?format=json", settings: settings, failureState: .warning) {
-                try await fetchJSON(IpifyResponse.self, from: "https://api6.ipify.org?format=json", settings: settings)
-            }
-            : disabledSource(IpifyResponse.self, source: "ipify IPv6", sourceID: .ipifyIPv6, url: "https://api6.ipify.org?format=json")
+        let ipifyIPv6Result = Task {
+            settings.isEnabled(.ipifyIPv6)
+                ? await captureSource(source: "ipify IPv6", sourceID: .ipifyIPv6, url: "https://api6.ipify.org?format=json", settings: settings, failureState: .warning) {
+                    try await fetchJSON(IpifyResponse.self, from: "https://api6.ipify.org?format=json", settings: settings)
+                }
+                : disabledSource(IpifyResponse.self, source: "ipify IPv6", sourceID: .ipifyIPv6, url: "https://api6.ipify.org?format=json")
+        }
 
-        async let ipwhoResult = settings.isEnabled(.ipwho)
-            ? captureSource(source: "ipwho.is", sourceID: .ipwho, url: "https://ipwho.is/", settings: settings) {
-                try await fetchJSON(IPWhoResponse.self, from: "https://ipwho.is/", settings: settings)
-            }
-            : disabledSource(IPWhoResponse.self, source: "ipwho.is", sourceID: .ipwho, url: "https://ipwho.is/")
+        let ipwhoResult = Task {
+            settings.isEnabled(.ipwho)
+                ? await captureSource(source: "ipwho.is", sourceID: .ipwho, url: "https://ipwho.is/", settings: settings) {
+                    try await fetchJSON(IPWhoResponse.self, from: "https://ipwho.is/", settings: settings)
+                }
+                : disabledSource(IPWhoResponse.self, source: "ipwho.is", sourceID: .ipwho, url: "https://ipwho.is/")
+        }
 
-        async let ipapiIsResult = settings.isEnabled(.ipapi)
-            ? captureSource(source: "ipapi.is", sourceID: .ipapi, url: "https://api.ipapi.is/", settings: settings) {
-                try await fetchJSON(IPAPIISResponse.self, from: "https://api.ipapi.is/", settings: settings)
-            }
-            : disabledSource(IPAPIISResponse.self, source: "ipapi.is", sourceID: .ipapi, url: "https://api.ipapi.is/")
+        let ipapiIsResult = Task {
+            settings.isEnabled(.ipapi)
+                ? await captureSource(source: "ipapi.is", sourceID: .ipapi, url: "https://api.ipapi.is/", settings: settings) {
+                    try await fetchJSON(IPAPIISResponse.self, from: "https://api.ipapi.is/", settings: settings)
+                }
+                : disabledSource(IPAPIISResponse.self, source: "ipapi.is", sourceID: .ipapi, url: "https://api.ipapi.is/")
+        }
 
-        async let ifconfigResult = settings.isEnabled(.ifconfig)
-            ? captureSource(source: "ifconfig.co", sourceID: .ifconfig, url: "https://ifconfig.co/json", settings: settings) {
-                try await fetchJSON(IfconfigResponse.self, from: "https://ifconfig.co/json", settings: settings)
-            }
-            : disabledSource(IfconfigResponse.self, source: "ifconfig.co", sourceID: .ifconfig, url: "https://ifconfig.co/json")
+        let ifconfigResult = Task {
+            settings.isEnabled(.ifconfig)
+                ? await captureSource(source: "ifconfig.co", sourceID: .ifconfig, url: "https://ifconfig.co/json", settings: settings) {
+                    try await fetchJSON(IfconfigResponse.self, from: "https://ifconfig.co/json", settings: settings)
+                }
+                : disabledSource(IfconfigResponse.self, source: "ifconfig.co", sourceID: .ifconfig, url: "https://ifconfig.co/json")
+        }
 
-        async let dnsResult = settings.isEnabled(.dns)
-            ? DNSResolverProbe().run()
-            : DNSResolverProbeResult(
-                info: DNSResolverInfo(),
-                statuses: [SourceStatus(source: "local DNS", url: "scutil --dns", state: .disabled, durationMS: 0, errorMessage: nil)]
+        let dnsResult = Task {
+            settings.isEnabled(.dns)
+                ? await DNSResolverProbe().run()
+                : DNSResolverProbeResult(
+                    info: DNSResolverInfo(),
+                    statuses: [SourceStatus(source: "local DNS", url: "scutil --dns", state: .disabled, durationMS: 0, errorMessage: nil)]
+                )
+        }
+        let proxyResult = Task { await SystemProxyProbe().run() }
+        let interfaceResult = Task { await NetworkInterfaceProbe().run() }
+
+        let (ipifyDual, ipifyIPv4, ipifyIPv6, ipwho, ipapiIs, ifconfig, dns, proxy, interfaces) = await withTaskCancellationHandler {
+            await (
+                ipifyDualResult.value,
+                ipifyIPv4Result.value,
+                ipifyIPv6Result.value,
+                ipwhoResult.value,
+                ipapiIsResult.value,
+                ifconfigResult.value,
+                dnsResult.value,
+                proxyResult.value,
+                interfaceResult.value
             )
-        async let proxyResult = SystemProxyProbe().run()
-        async let interfaceResult = NetworkInterfaceProbe().run()
-
-        let ipifyDual = await ipifyDualResult
-        let ipifyIPv4 = await ipifyIPv4Result
-        let ipifyIPv6 = await ipifyIPv6Result
-        let ipwho = await ipwhoResult
-        let ipapiIs = await ipapiIsResult
-        let ifconfig = await ifconfigResult
-        let dns = await dnsResult
-        let proxy = await proxyResult
-        let interfaces = await interfaceResult
+        } onCancel: {
+            // Task handles are unstructured, so forward parent cancellation
+            // explicitly while still awaiting all results before returning.
+            ipifyDualResult.cancel()
+            ipifyIPv4Result.cancel()
+            ipifyIPv6Result.cancel()
+            ipwhoResult.cancel()
+            ipapiIsResult.cancel()
+            ifconfigResult.cancel()
+            dnsResult.cancel()
+            proxyResult.cancel()
+            interfaceResult.cancel()
+        }
 
         [
             ipifyDual.status,

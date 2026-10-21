@@ -548,7 +548,15 @@ final class NotificationService {
     private init() {}
 
     func requestAuthorization() {
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
+        // The completion-handler API calls back on a background queue. Inheriting
+        // MainActor isolation in that callback traps on recent Swift runtimes.
+        Task { @MainActor in
+            do {
+                _ = try await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound])
+            } catch {
+                NSLog("NetEnvCheck notification authorization failed: %@", error.localizedDescription)
+            }
+        }
     }
 
     func notifyIfNeeded(previous: CheckReport, current: CheckReport) {
